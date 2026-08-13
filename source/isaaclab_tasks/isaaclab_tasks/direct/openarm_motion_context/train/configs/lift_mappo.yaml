@@ -1,0 +1,95 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers.
+# SPDX-License-Identifier: BSD-3-Clause
+
+seed: 42
+
+runtime:
+  agent_builder: "isaaclab_tasks.direct.openarm_motion_context.models.actor:build_motion_context_mappo_agent"
+  trainer: "isaaclab_tasks.direct.openarm_motion_context.train.trainer:MotionContextTrainer"
+
+models:
+  separate: True
+  policy:
+    # communication_mode is configured by the env. intent_variant remains a CLI/checkpoint alias.
+    intent_variant: share_intent
+    intent_arch: shared_intent_encoder
+    communication_mode: motion_context
+    class: GaussianMixin
+    clip_actions: True
+    clip_log_std: True
+    min_log_std: -20.0
+    max_log_std: 2.0
+    initial_log_std: 0.0
+    motion_intent_dim: 3
+    motion_context_dim: 3
+    communication_feature_dim: 30
+    own_observation_dim: 30
+    partner_message_embed_dim: 32
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [128, 128]
+        activations: elu
+    output: ACTIONS
+  value:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [256, 256]
+        activations: elu
+    output: ONE
+
+memory:
+  class: RandomMemory
+  memory_size: -1
+
+agent:
+  class: MAPPO
+  rollouts: 32
+  learning_epochs: 5
+  mini_batches: 8
+  discount_factor: 0.99
+  lambda: 0.95
+  learning_rate: 3.0e-04
+  learning_rate_scheduler: KLAdaptiveLR
+  learning_rate_scheduler_kwargs:
+    kl_threshold: 0.016
+  state_preprocessor: RunningStandardScaler
+  state_preprocessor_kwargs: null
+  shared_state_preprocessor: RunningStandardScaler
+  shared_state_preprocessor_kwargs: null
+  value_preprocessor: RunningStandardScaler
+  value_preprocessor_kwargs: null
+  random_timesteps: 0
+  learning_starts: 0
+  grad_norm_clip: 1.0
+  ratio_clip: 0.2
+  value_clip: 0.2
+  clip_predicted_values: True
+  entropy_loss_scale: 0.015
+  value_loss_scale: 2.0
+  intent_variant: share_intent
+  intent_arch: shared_intent_encoder
+  kl_threshold: 0.0
+  rewards_shaper_scale: 1.0
+  time_limit_bootstrap: False
+  experiment:
+    directory: "openarm_paper_re_lift"
+    experiment_name: ""
+    write_interval: 32
+    checkpoint_interval: 5000
+
+trainer:
+  class: SequentialTrainer
+  intent_variant: share_intent
+  intent_arch: shared_intent_encoder
+  timesteps: 120000
+  environment_info: log
+  debug_interval: 500
+  save_mode_trace: False
+  mode_trace_dir: "logs/paper_motion_context_traces"
+  mode_trace_env_index: 0
+  mode_trace_format: "json"
+  num_trace_episodes: 50
