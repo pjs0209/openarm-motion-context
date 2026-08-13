@@ -58,8 +58,10 @@ assets.
 export OPENARM_ASSET_DIR=/absolute/path/to/assets/openarm
 ```
 
-The task fails immediately with a clear error when this variable is missing,
-instead of silently using a machine-specific path.
+When the repository is overlaid into an `IsaacLab` workspace, the task first
+tries the standard sibling path `../assets/openarm`. Set the environment
+variable explicitly when assets use a different layout. If neither location is
+valid, the task fails immediately with the paths and required filenames.
 
 ## Train
 

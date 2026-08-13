@@ -9,18 +9,44 @@ from __future__ import annotations
 
 import math
 import os
+from pathlib import Path
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
 
-OPENARM_ASSET_DIR = os.environ.get("OPENARM_ASSET_DIR")
-if not OPENARM_ASSET_DIR:
-    raise RuntimeError(
-        "OPENARM_ASSET_DIR is required. Set it to the directory containing the OpenArm robot and task USD files."
+def _resolve_openarm_asset_dir() -> str:
+    """Resolve assets from an override or the standard workspace layout."""
+
+    configured = os.environ.get("OPENARM_ASSET_DIR")
+    candidates = []
+    if configured:
+        candidates.append(Path(configured).expanduser())
+
+    source_path = Path(__file__).resolve()
+    isaaclab_root = next((parent for parent in source_path.parents if parent.name == "IsaacLab"), None)
+    if isaaclab_root is not None:
+        candidates.append(isaaclab_root.parent / "assets" / "openarm")
+
+    required = (
+        "openarm_robot_with_camera_fixed.usda",
+        "openarm_env_box.usd",
+        "openarm_env_peg_in_hole.usd",
     )
-OPENARM_ASSET_DIR = os.path.abspath(os.path.expanduser(OPENARM_ASSET_DIR))
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if all((resolved / filename).is_file() for filename in required):
+            return str(resolved)
+
+    checked = ", ".join(str(candidate) for candidate in candidates) or "no paths"
+    raise RuntimeError(
+        "Unable to locate OpenArm USD assets. Set OPENARM_ASSET_DIR to the directory containing "
+        f"{', '.join(required)}. Checked: {checked}."
+    )
+
+
+OPENARM_ASSET_DIR = _resolve_openarm_asset_dir()
 
 
 _START_POSE_DEG = {
