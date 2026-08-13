@@ -1,0 +1,203 @@
+base_frame: openarm_body_link0
+control_rate_hz: 30.0
+checkpoint: logs/skrl/openarm_paper_re_lift/paper_re_lift_motion_context/checkpoints/best_agent.pt
+dry_run: true
+safety:
+  max_joint_step: 0.04
+  max_command_abs_from_default: 0.7
+  max_target_delta_norm: 1.0
+  max_joint_state_age: 0.25
+  max_detection_age: 0.35
+  min_visible_tags: 1
+  require_matching_detection_frame: true
+policy:
+  device: cpu
+  hidden_sizes:
+  - 128
+  - 128
+  own_observation_dim: 30
+  communication_feature_dim: 30
+  motion_intent_dim: 3
+  motion_context_dim: 3
+  partner_intent_embed_dim: 32
+communication:
+  mode: motion_context
+  motion_intent_horizon: 15
+  interaction_motion_scale: 0.05
+  context_scale:
+  - 0.1
+  - 0.5
+  - 0.5
+  context_norm_max: 1.5
+action:
+  action_scale: 0.7
+  action_step_scale: 0.04
+  gripper_open_target: 0.04
+  gripper_close_target: 0.0
+  gripper_switch_epsilon: 0.02
+  command_time_from_start: 0.08
+topics:
+  joint_states: /joint_states
+  commands:
+    left_arm: /left_joint_trajectory_controller/joint_trajectory
+    right_arm: /right_joint_trajectory_controller/joint_trajectory
+    left_gripper: /left_gripper_controller/joint_trajectory
+    right_gripper: /right_gripper_controller/joint_trajectory
+  apriltag:
+    left_wrist: /left_d435i/tag_detections
+    right_wrist: /right_d435i/tag_detections
+    chest: /chest_d435i/tag_detections
+frames:
+  left_ee: openarm_left_ee_tcp
+  right_ee: openarm_right_ee_tcp
+  cameras:
+    left_wrist: realsense_d435i_left_color_optical_frame
+    right_wrist: realsense_d435i_right_color_optical_frame
+    chest: realsense_d435i_color_optical_frame
+  camera_mounts:
+    left_wrist: openarm_left_link7
+    right_wrist: openarm_right_link7
+    chest: openarm_body_link0
+static_policy_transforms:
+- parent: openarm_left_hand
+  child: openarm_left_ee_tcp
+  xyz: [0.0, 0.0, 0.093]
+  quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+- parent: openarm_right_hand
+  child: openarm_right_ee_tcp
+  xyz: [0.0, 0.0, 0.093]
+  quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+- parent: openarm_left_link7
+  child: realsense_d435i_left_link
+  xyz: [0.07202722, 0.01499805, 0.10956045]
+  quat_wxyz: [-0.00000086, 0.44619791, -0.00000164, 0.89493432]
+- parent: openarm_right_link7
+  child: realsense_d435i_right_link
+  xyz: [0.07202722, 0.01500195, 0.10956034]
+  quat_wxyz: [0.00000073, 0.44619789, 0.00000157, 0.89493432]
+- parent: openarm_body_link0
+  child: realsense_d435i_link
+  xyz: [0.05368660, 0.01684019, 0.62500256]
+  quat_wxyz: [-0.92387953, -0.00000002, -0.38268345, -0.00000008]
+camera_extrinsics_usd:
+  left_wrist:
+    mount_prim: openarm_left_link7
+    camera_prim: realsense_d435i_left/camera_link/camera_color_frame/camera_color_optical_frame
+    pos_mount_camera:
+    - 0.07202722
+    - -1.95e-06
+    - 0.10956039
+    quat_mount_camera:
+    - 0.6705665
+    - -0.22436696
+    - -0.22436945
+    - 0.67056572
+  right_wrist:
+    mount_prim: openarm_right_link7
+    camera_prim: realsense_d435i_right/camera_link/camera_color_frame/camera_color_optical_frame
+    pos_mount_camera:
+    - 0.07202722
+    - 1.95e-06
+    - 0.10956039
+    quat_mount_camera:
+    - 0.67056572
+    - -0.22436938
+    - -0.22436707
+    - 0.67056656
+  chest:
+    mount_prim: openarm_body_link
+    camera_prim: realsense_d435i/camera_link/camera_color_frame/camera_color_optical_frame
+    pos_mount_camera:
+    - 0.0536866
+    - 0.03184019
+    - 0.62500256
+    quat_mount_camera:
+    - -0.27059808
+    - 0.65328151
+    - -0.65328145
+    - 0.27059799
+joints:
+  left_arm:
+  - openarm_left_joint1
+  - openarm_left_joint2
+  - openarm_left_joint3
+  - openarm_left_joint4
+  - openarm_left_joint5
+  - openarm_left_joint6
+  - openarm_left_joint7
+  right_arm:
+  - openarm_right_joint1
+  - openarm_right_joint2
+  - openarm_right_joint3
+  - openarm_right_joint4
+  - openarm_right_joint5
+  - openarm_right_joint6
+  - openarm_right_joint7
+  left_gripper:
+  - openarm_left_finger_joint1
+  right_gripper:
+  - openarm_right_finger_joint1
+default_joint_pos:
+  left_arm:
+  - -0.52359878
+  - -0.34906585
+  - 0.34906585
+  - 2.26892803
+  - -0.09599311
+  - -0.05235988
+  - 1.55334303
+  right_arm:
+  - 0.52359878
+  - 0.34906585
+  - -0.34906585
+  - 2.26892803
+  - 0.09599311
+  - 0.05235988
+  - -1.55334303
+apriltag:
+  ids:
+  - 0
+  - 1
+  - 2
+  tag_pos_box:
+  - - 0.0
+    - 0.0
+    - -0.07095747
+  - - 0.0
+    - -0.14300001
+    - 0.0729
+  - - 0.0
+    - 0.14300001
+    - 0.0729
+  tag_quat_box:
+  - - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  - - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  - - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+grip_targets:
+  left_pos_box:
+  - 0.0
+  - 0.14079
+  - 0.03060839
+  left_quat_box:
+  - -4.0e-08
+  - 1.0
+  - 0.0
+  - 0.0
+  right_pos_box:
+  - 0.0
+  - -0.1407873
+  - 0.03060839
+  right_quat_box:
+  - -4.0e-08
+  - 1.0
+  - 0.0
+  - 0.0

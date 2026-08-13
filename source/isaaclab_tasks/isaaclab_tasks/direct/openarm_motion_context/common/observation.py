@@ -1,0 +1,5 @@
+"""Actor observation dimensions used by simulation and deployment."""
+
+OWN_OBSERVATION_DIM = 30
+COMMUNICATION_SLOT_DIM = 30
+ACTOR_OBSERVATION_DIM = OWN_OBSERVATION_DIM + COMMUNICATION_SLOT_DIM

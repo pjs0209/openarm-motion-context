@@ -1,0 +1,5 @@
+"""OpenArm incremental action contract."""
+
+ARM_ACTION_DIM = 7
+GRIPPER_ACTION_DIM = 1
+AGENT_ACTION_DIM = ARM_ACTION_DIM + GRIPPER_ACTION_DIM
