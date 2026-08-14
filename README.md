@@ -24,15 +24,18 @@ estimation, trace analysis, and ROS 2 deployment utilities.
 
 ## Install into Isaac Lab
 
-Clone this repository next to or inside your Isaac Lab workspace, then copy its
-overlay while preserving relative paths:
+Clone this repository with its pinned upstream dependencies, then copy the
+project overlay into the bundled Isaac Lab checkout:
 
 ```bash
-git clone https://github.com/pjs0209/openarm-motion-context.git
-cd /path/to/IsaacLab
-cp -a /path/to/openarm-motion-context/source/. source/
-cp -a /path/to/openarm-motion-context/scripts/. scripts/
+git clone --recurse-submodules https://github.com/pjs0209/openarm-motion-context.git
+cd openarm-motion-context
+cp -a source/. third_party/IsaacLab/source/
+cp -a scripts/. third_party/IsaacLab/scripts/
 ```
+
+If the repository was cloned without `--recurse-submodules`, initialize the
+dependencies afterward with `git submodule update --init --recursive`.
 
 All implementation and configuration lives under
 `isaaclab_tasks.direct.openarm_motion_context`.
@@ -48,8 +51,10 @@ source/isaaclab_assets/data/Environments/OpenArm/{lift,peg_in_hole}
 source/isaaclab_assets/data/Objects/OpenArm/peg_in_hole
 ```
 
-The bundled paths are used by default. Separate overrides are available when
-assets live elsewhere:
+The OpenArm USD assets are workspace artifacts and are not duplicated inside
+the upstream dependency submodules. Copy the validated asset directories from
+the training workstation into `third_party/IsaacLab/source/isaaclab_assets/data`
+or use the following overrides when the assets live elsewhere:
 
 ```bash
 export OPENARM_ROBOT_ASSET_DIR=/absolute/path/to/Robots/OpenArm

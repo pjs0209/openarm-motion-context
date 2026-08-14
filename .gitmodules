@@ -1,0 +1,16 @@
+[submodule "third_party/openarm_ros2"]
+	path = third_party/openarm_ros2
+	url = https://github.com/enactic/openarm_ros2.git
+[submodule "third_party/openarm_can"]
+	path = third_party/openarm_can
+	url = https://github.com/enactic/openarm_can.git
+[submodule "third_party/realsense-ros"]
+	path = third_party/realsense-ros
+	url = https://github.com/realsenseai/realsense-ros.git
+	branch = ros2-master
+[submodule "third_party/apriltag_ros"]
+	path = third_party/apriltag_ros
+	url = https://github.com/christianrauch/apriltag_ros.git
+[submodule "third_party/IsaacLab"]
+	path = third_party/IsaacLab
+	url = https://github.com/isaac-sim/IsaacLab.git
