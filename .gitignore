@@ -13,3 +13,13 @@ checkpoints/
 *.bag
 *.db3
 videos/
+
+# Local Python environment
+.venv/
+
+# Local deployment backups
+*.bak
+*.before_*
+
+# Local TF/debug output
+realsense_d435i_color_optical_frame
