@@ -19,6 +19,7 @@ small geometry and policy modules in ``openarm_motion_context``.
 
 from __future__ import annotations
 
+import rclpy
 import argparse
 import os
 import sys
@@ -382,11 +383,18 @@ class OpenArmPaperReLiftDeployNode:
             tag_id = _extract_detection_id(detection)
             if tag_id not in self.tag_id_to_index:
                 continue
-            pose = _extract_detection_pose(detection)
+
+            tag_frame = f"apriltag_{tag_id:02d}"
+            pose = self._lookup_transform_pose(
+                self.camera_frames[camera_index],
+                tag_frame,
+                None,
+            )
             if pose is None:
                 continue
+
             tag_index = self.tag_id_to_index[tag_id]
-            detections[tag_index] = (stamp, *_ros_pose_to_pose(pose, device=self.device))
+            detections[tag_index] = (stamp, pose[0], pose[1])
         # All detections in one array share the same image timestamp. Replace
         # the camera snapshot so a tag left over from an older image is never
         # transformed with the current wrist-camera pose.
@@ -659,6 +667,21 @@ class OpenArmPaperReLiftDeployNode:
             step_scale,
             target_limit,
         )
+
+        # Real-robot safety: do not allow the commanded target to run too far
+        # ahead of the measured joint position if the controller cannot keep up.
+        arm_joints = self.left_arm_joints if agent == "left_arm" else self.right_arm_joints
+        measured_q = self._joint_values(arm_joints)[0]
+        max_tracking_error = self._safety_cfg("max_tracking_error", 0.08)
+
+        state.q_target = torch.maximum(
+            torch.minimum(
+                state.q_target,
+                measured_q + max_tracking_error,
+            ),
+            measured_q - max_tracking_error,
+        )
+
         eps = float(action_cfg.get("gripper_switch_epsilon", 0.02))
         state.gripper_closed = update_gripper_closed(state.gripper_closed, action[7], eps)
         grip_target = (
@@ -673,11 +696,29 @@ class OpenArmPaperReLiftDeployNode:
     def _trajectory_message(self, joint_names: list[str], positions: torch.Tensor):
         msg = self.JointTrajectory()
         msg.joint_names = joint_names
-        point = self.JointTrajectoryPoint()
-        point.positions = positions.detach().cpu().tolist()
-        duration = float(self.cfg["action"].get("command_time_from_start", 0.08))
-        point.time_from_start = self.DurationMsg(sec=int(duration), nanosec=int((duration % 1.0) * 1.0e9))
-        msg.points = [point]
+
+        measured, _ = self._joint_values(joint_names)
+
+        start_time = 0.02
+        target_time = float(
+            self.cfg["action"].get("command_time_from_start", 0.15)
+        )
+
+        start = self.JointTrajectoryPoint()
+        start.positions = measured.detach().cpu().tolist()
+        start.time_from_start = self.DurationMsg(
+            sec=int(start_time),
+            nanosec=int((start_time % 1.0) * 1.0e9),
+        )
+
+        target = self.JointTrajectoryPoint()
+        target.positions = positions.detach().cpu().tolist()
+        target.time_from_start = self.DurationMsg(
+            sec=int(target_time),
+            nanosec=int((target_time % 1.0) * 1.0e9),
+        )
+
+        msg.points = [start, target]
         return msg
 
     def _publish_command(self, left_q: torch.Tensor, right_q: torch.Tensor, left_grip: torch.Tensor, right_grip: torch.Tensor) -> None:
@@ -762,14 +803,15 @@ class OpenArmPaperReLiftDeployNode:
             self.rclpy.spin(self.node)
         finally:
             self.node.destroy_node()
-            self.rclpy.shutdown()
+            if self.rclpy.ok():
+                self.rclpy.shutdown()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="Deploy YAML path")
     parser.add_argument("--checkpoint", default=None, help="Override checkpoint path from YAML")
-    parser.add_argument("--dry-run", action="store_true", help="Log commands instead of publishing them")
+    parser.add_argument("--dry-run", action="store_true", help="Log commands instead of publishing")
     parser.add_argument("--publish", action="store_true", help="Publish JointTrajectory commands")
     args = parser.parse_args()
 
@@ -781,9 +823,10 @@ def main() -> None:
     if args.publish:
         cfg["dry_run"] = False
 
+    rclpy.init()
+
     node = OpenArmPaperReLiftDeployNode(cfg)
     node.spin()
-
 
 if __name__ == "__main__":
     main()

@@ -153,25 +153,82 @@ def main() -> int:
     node.get_logger().warning(
         f"Moving both arms to the task start pose over {args.duration:.1f}s. Keep the emergency stop ready."
     )
-    steps = max(1, int(math.ceil(args.duration * args.rate)))
-    period = 1.0 / args.rate
-    next_tick = time.monotonic()
-    for step in range(steps + 1):
-        if not rclpy.ok():
-            break
-        if time.monotonic() - latest_state_time > 0.5:
-            raise RuntimeError("JointState stream became stale during task-start motion")
-        progress = step / steps
-        for side in group_names:
-            command = cosine_blend(starts[side], group_targets[side], progress)
-            publishers[side].publish(
-                _trajectory_message(group_names[side], command, args.command_lead)
-            )
-        rclpy.spin_once(node, timeout_sec=0.0)
-        next_tick += period
-        time.sleep(max(0.0, next_tick - time.monotonic()))
+    # Send one complete trajectory instead of repeatedly replacing the
+    # controller goal with short single-point trajectories.
+    #
+    # First hold the measured pose briefly, then follow a cosine trajectory
+    # whose velocity is zero at both ends.
+    hold_seconds = 1.0
+    steps = max(2, int(math.ceil(args.duration * args.rate)))
 
-    settle_deadline = time.monotonic() + max(1.0, 2.0 * args.command_lead)
+    for side in group_names:
+        trajectory = JointTrajectory()
+        trajectory.joint_names = list(group_names[side])
+
+        # Point 0: current measured pose.
+        trajectory.points.append(
+            _trajectory_message(
+                group_names[side],
+                starts[side],
+                args.command_lead,
+            ).points[0]
+        )
+
+        # Point 1: hold the current pose before motion begins.
+        trajectory.points.append(
+            _trajectory_message(
+                group_names[side],
+                starts[side],
+                args.command_lead + hold_seconds,
+            ).points[0]
+        )
+
+        # Complete smooth trajectory.
+        for step in range(1, steps + 1):
+            progress = step / steps
+            command = cosine_blend(
+                starts[side],
+                group_targets[side],
+                progress,
+            )
+            point_time = (
+                args.command_lead
+                + hold_seconds
+                + args.duration * progress
+            )
+            trajectory.points.append(
+                _trajectory_message(
+                    group_names[side],
+                    command,
+                    point_time,
+                ).points[0]
+            )
+
+        publishers[side].publish(trajectory)
+
+    node.get_logger().info(
+        f"Published complete task-start trajectory: "
+        f"hold={hold_seconds:.1f}s, motion={args.duration:.1f}s, "
+        f"points={steps + 2}"
+    )
+
+    motion_deadline = (
+        time.monotonic()
+        + args.command_lead
+        + hold_seconds
+        + args.duration
+        + 0.5
+    )
+
+    while rclpy.ok() and time.monotonic() < motion_deadline:
+        rclpy.spin_once(node, timeout_sec=0.05)
+
+        if time.monotonic() - latest_state_time > 0.5:
+            raise RuntimeError(
+                "JointState stream became stale during task-start motion"
+            )
+
+    settle_deadline = time.monotonic() + 1.0
     while rclpy.ok() and time.monotonic() < settle_deadline:
         rclpy.spin_once(node, timeout_sec=0.05)
 
