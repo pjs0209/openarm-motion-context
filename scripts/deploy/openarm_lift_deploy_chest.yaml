@@ -47,15 +47,17 @@ topics:
   apriltag:
     chest: /chest_d435i/tag_detections
 frames:
-  left_ee: openarm_left_hand_tcp
-  right_ee: openarm_right_hand_tcp
+  left_ee: openarm_left_ee_tcp
+  right_ee: openarm_right_ee_tcp
   cameras:
     chest: realsense_d435i_color_optical_frame
+  tag_frame_prefixes:
+    chest: chest_apriltag_
   camera_mounts:
     chest: openarm_body_link0
 static_policy_transforms:
 - parent: openarm_left_hand
-  child: openarm_left_hand_tcp
+  child: openarm_left_ee_tcp
   xyz:
   - 0.0
   - 0.0
@@ -66,7 +68,7 @@ static_policy_transforms:
   - 0.0
   - 0.0
 - parent: openarm_right_hand
-  child: openarm_right_hand_tcp
+  child: openarm_right_ee_tcp
   xyz:
   - 0.0
   - 0.0

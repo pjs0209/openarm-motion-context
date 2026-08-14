@@ -15,6 +15,7 @@ safety:
   max_joint_state_age: 0.25
   max_detection_age: 0.35
   min_visible_tags: 1
+  max_tracking_error: 0.08
   # Reject detector poses unless they are expressed in the configured color
   # optical frame. This prevents silent camera-frame convention errors.
   require_matching_detection_frame: true
@@ -41,7 +42,7 @@ action:
   gripper_open_target: 0.04
   gripper_close_target: 0.0
   gripper_switch_epsilon: 0.02
-  command_time_from_start: 0.08
+  command_time_from_start: 0.15
 
 topics:
   joint_states: /joint_states
@@ -56,12 +57,18 @@ topics:
     chest: /chest_d435i/tag_detections
 
 frames:
-  left_ee: openarm_left_hand_tcp
-  right_ee: openarm_right_hand_tcp
+  left_ee: openarm_left_ee_tcp
+  right_ee: openarm_right_ee_tcp
   cameras:
     left_wrist: realsense_d435i_left_color_optical_frame
     right_wrist: realsense_d435i_right_color_optical_frame
     chest: realsense_d435i_color_optical_frame
+  # Each detector must publish unique TF child names. A TF child frame cannot
+  # belong to three camera parents at once.
+  tag_frame_prefixes:
+    left_wrist: left_wrist_apriltag_
+    right_wrist: right_wrist_apriltag_
+    chest: chest_apriltag_
   # TF must contain each mount-to-optical chain. Wrist chains combine robot FK
   # with the calibrated fixed camera extrinsic; the chest chain is fixed.
   camera_mounts:
@@ -71,11 +78,11 @@ frames:
 
 static_policy_transforms:
   - parent: openarm_left_hand
-    child: openarm_left_hand_tcp
+    child: openarm_left_ee_tcp
     xyz: [0.0, 0.0, 0.093]
     quat_wxyz: [1.0, 0.0, 0.0, 0.0]
   - parent: openarm_right_hand
-    child: openarm_right_hand_tcp
+    child: openarm_right_ee_tcp
     xyz: [0.0, 0.0, 0.093]
     quat_wxyz: [1.0, 0.0, 0.0, 0.0]
   - parent: openarm_left_link7

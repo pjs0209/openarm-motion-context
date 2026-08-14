@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Compatibility launcher for the reorganized ROS2 deployment node."""
+"""Launcher for the real-robot deployment node without Isaac Sim imports."""
 
-from isaaclab_tasks.direct.openarm_motion_context.deploy.deploy_node import main
+import runpy
+from pathlib import Path
 
 
 if __name__ == "__main__":
-    main()
+    module_path = (
+        Path(__file__).resolve().parents[2]
+        / "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/deploy_node.py"
+    )
+    runpy.run_path(str(module_path), run_name="__main__")

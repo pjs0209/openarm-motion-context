@@ -26,13 +26,13 @@ parser.add_argument("--task", type=str, default="Isaac-OpenArm-Lift-v0", help="O
 parser.add_argument(
     "--template",
     type=str,
-    default="source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real.yaml",
+    default="scripts/deploy/openarm_lift_deploy.yaml",
     help="Deploy YAML template to update",
 )
 parser.add_argument(
     "--output",
     type=str,
-    default="source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real_calibrated.yaml",
+    default="scripts/deploy/openarm_lift_deploy.yaml",
     help="Output calibrated deploy YAML",
 )
 AppLauncher.add_app_launcher_args(parser)

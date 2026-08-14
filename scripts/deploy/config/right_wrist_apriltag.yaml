@@ -17,5 +17,5 @@
 
     tag:
       ids: [0, 1, 2]
-      frames: [chest_apriltag_00, chest_apriltag_01, chest_apriltag_02]
+      frames: [right_wrist_apriltag_00, right_wrist_apriltag_01, right_wrist_apriltag_02]
       sizes: [0.04, 0.04, 0.04]

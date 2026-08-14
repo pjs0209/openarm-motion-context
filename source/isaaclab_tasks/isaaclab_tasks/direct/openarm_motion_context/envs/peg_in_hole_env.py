@@ -92,8 +92,7 @@ class OpenArmPegInHoleEnvCfg(DirectMARLEnvCfg):
     motion_intent_horizon = 15
     interaction_motion_scale = 0.05
     motion_intent_dim = 3
-    # Compatibility name for the shared Paper motion-context agent. In the paper tasks
-    # these 3 slots are direct motion context, not learned latent modes.
+    # These three slots are direct motion context, not learned latent modes.
     motion_context_dim = 3
     intent_feature_dim = 30
     actor_partner_intent_dim = 30

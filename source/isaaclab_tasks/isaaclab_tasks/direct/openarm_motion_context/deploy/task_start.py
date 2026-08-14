@@ -212,6 +212,22 @@ def main() -> int:
         f"points={steps + 2}"
     )
 
+    def publish_emergency_hold(reason: str) -> None:
+        """Replace queued trajectories with a hold at the last measured pose."""
+
+        if latest_state is None:
+            return
+        node.get_logger().error(f"Stopping task-start motion: {reason}")
+        for side, names in group_names.items():
+            measured = positions_by_name(
+                list(latest_state.name),
+                list(latest_state.position),
+                names,
+            )
+            publishers[side].publish(
+                _trajectory_message(names, measured, max(args.command_lead, 0.1))
+            )
+
     motion_deadline = (
         time.monotonic()
         + args.command_lead
@@ -220,13 +236,24 @@ def main() -> int:
         + 0.5
     )
 
-    while rclpy.ok() and time.monotonic() < motion_deadline:
-        rclpy.spin_once(node, timeout_sec=0.05)
+    try:
+        while rclpy.ok() and time.monotonic() < motion_deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
 
-        if time.monotonic() - latest_state_time > 0.5:
-            raise RuntimeError(
-                "JointState stream became stale during task-start motion"
-            )
+            if time.monotonic() - latest_state_time > 0.5:
+                publish_emergency_hold("JointState stream became stale")
+                rclpy.spin_once(node, timeout_sec=0.1)
+                node.destroy_node()
+                rclpy.shutdown()
+                raise RuntimeError(
+                    "JointState stream became stale during task-start motion"
+                )
+    except KeyboardInterrupt:
+        publish_emergency_hold("interrupted by operator")
+        rclpy.spin_once(node, timeout_sec=0.1)
+        node.destroy_node()
+        rclpy.shutdown()
+        return 130
 
     settle_deadline = time.monotonic() + 1.0
     while rclpy.ok() and time.monotonic() < settle_deadline:

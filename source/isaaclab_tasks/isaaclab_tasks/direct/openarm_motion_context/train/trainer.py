@@ -1854,7 +1854,3 @@ class MotionContextTrainer(SequentialTrainer):
                 terminated_at_end=bool(self._mode_trace_last_done.get("terminated", False)),
                 truncated_at_end=bool(self._mode_trace_last_done.get("truncated", False)),
             )
-
-
-# Backward-compatible name for existing Hydra experiment metadata.
-PaperIntentTrainer = MotionContextTrainer

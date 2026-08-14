@@ -208,7 +208,7 @@ cd ~/openarm-motion-context
 source /opt/ros/humble/setup.bash
 source ~/openarm_robot_ws/install/setup.bash
 python3 scripts/deploy/openarm_move_to_task_start.py \
-  --config source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real_calibrated.yaml
+  --config scripts/deploy/openarm_lift_deploy.yaml
 ```
 
 Clear the workspace, keep the emergency stop ready, and then explicitly execute
@@ -216,7 +216,7 @@ the eight-second transition:
 
 ```bash
 python3 scripts/deploy/openarm_move_to_task_start.py \
-  --config source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real_calibrated.yaml \
+  --config scripts/deploy/openarm_lift_deploy.yaml \
   --duration 8.0 \
   --execute
 ```
@@ -229,13 +229,25 @@ the configured pose. The target joint values come from the same
 
 Start all three D435i drivers using their fixed serial numbers and launch one
 AprilTag detector for each color stream. The resulting topics and optical
-frames must match `lift_real_calibrated.yaml`:
+frames must match `scripts/deploy/openarm_lift_deploy.yaml`:
 
 ```text
 /left_d435i/tag_detections   -> realsense_d435i_left_color_optical_frame
 /right_d435i/tag_detections  -> realsense_d435i_right_color_optical_frame
 /chest_d435i/tag_detections  -> realsense_d435i_color_optical_frame
 ```
+
+Use the matching detector parameter file for each stream:
+
+```text
+scripts/deploy/config/left_wrist_apriltag.yaml
+scripts/deploy/config/right_wrist_apriltag.yaml
+scripts/deploy/config/chest_apriltag.yaml
+```
+
+These files deliberately publish camera-specific TF children such as
+`left_wrist_apriltag_00` and `chest_apriltag_00`. Do not reuse one tag-frame
+name across multiple detectors because TF permits only one parent per child.
 
 Check that detections and the chest camera transform are present:
 
@@ -254,7 +266,7 @@ source /opt/ros/humble/setup.bash
 source ~/openarm_robot_ws/install/setup.bash
 third_party/IsaacLab/isaaclab.sh -p \
   source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/camera_tf_check.py \
-  --config source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real_calibrated.yaml
+  --config scripts/deploy/openarm_lift_deploy.yaml
 ```
 
 ### Terminal 3: policy deployment
@@ -266,9 +278,8 @@ publish robot commands:
 cd ~/openarm-motion-context
 source /opt/ros/humble/setup.bash
 source ~/openarm_robot_ws/install/setup.bash
-third_party/IsaacLab/isaaclab.sh -p -m \
-  isaaclab_tasks.direct.openarm_motion_context.deploy.deploy_node \
-  --config source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real_calibrated.yaml \
+python3 scripts/deploy/openarm_lift_ros2.py \
+  --config scripts/deploy/openarm_lift_deploy.yaml \
   --checkpoint artifacts/checkpoints/lift_motion_context/best_agent.pt \
   --dry-run
 ```
@@ -280,9 +291,8 @@ and action limits are verified should command publishing be enabled:
 cd ~/openarm-motion-context
 source /opt/ros/humble/setup.bash
 source ~/openarm_robot_ws/install/setup.bash
-third_party/IsaacLab/isaaclab.sh -p -m \
-  isaaclab_tasks.direct.openarm_motion_context.deploy.deploy_node \
-  --config source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real_calibrated.yaml \
+python3 scripts/deploy/openarm_lift_ros2.py \
+  --config scripts/deploy/openarm_lift_deploy.yaml \
   --checkpoint artifacts/checkpoints/lift_motion_context/best_agent.pt \
   --publish
 ```

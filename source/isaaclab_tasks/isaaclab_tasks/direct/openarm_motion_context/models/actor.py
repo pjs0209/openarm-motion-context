@@ -1,7 +1,7 @@
 """Proprioceptive Motion Context Sharing skrl MAPPO model.
 
-이 파일은 paper task용 actor/critic network와 custom MAPPO update를 담고 있다.
-paper task에서는 learned latent mode를 학습하지 않고, 환경이 직접 계산한
+이 파일은 motion-context task용 actor/critic network와 custom MAPPO update를 담고 있다.
+이 task에서는 learned latent mode를 학습하지 않고, 환경이 직접 계산한
 communication message z=[signed EE motion 3D, proprioceptive motion context 3D]를 공유한다.
 
 최종 communication baseline:
@@ -82,7 +82,6 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         Model.__init__(
             self,
             observation_space=observation_space,
-            state_space=None,
             action_space=action_space,
             device=device,
         )
@@ -115,7 +114,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         self.actor_feature_dim = int(hidden_sizes[-1])
         self.policy_feature_dim = self.actor_feature_dim
         if self.num_actions < 2:
-            raise ValueError(f"Paper intent policy expects arm actions plus gripper action, got {self.num_actions}")
+            raise ValueError(f"Motion-context policy expects arm actions plus gripper action, got {self.num_actions}")
         self.partner_intent_encoder = None
         if self.uses_context:
             self.partner_intent_encoder = nn.Sequential(
@@ -180,7 +179,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         return torch.clamp(motion, -1.0, 1.0)
 
     def compute(self, inputs, role=""):
-        """Gaussian mean action과 paper intent metadata를 계산한다.
+        """Gaussian mean action과 motion-context metadata를 계산한다.
 
         actor graph의 핵심 branch:
         1. own_obs -> own_backbone (local representation)
@@ -282,11 +281,10 @@ class CriticValueModel(DeterministicMixin, Model):
     def __init__(self, observation_space, action_space, device, hidden_sizes: list[int], clip_actions: bool = False):
         Model.__init__(
             self,
-   	    observation_space=observation_space,
-   	    state_space=None,
-   	    action_space=action_space,
-	    device=device,
-	)
+            observation_space=observation_space,
+            action_space=action_space,
+            device=device,
+        )
         DeterministicMixin.__init__(
             self,
             clip_actions=clip_actions,
@@ -424,12 +422,15 @@ class MotionContextMAPPO(MAPPO):
         return 0
 
     def load_intent_heads(self, path: str, strict: bool = False) -> None:
-        """checkpoint 형식 파일에서 paper intent policy module을 로드한다."""
+        """Checkpoint 파일에서 motion-context policy module을 로드한다."""
 
         checkpoint = torch.load(path, map_location=self.device)
         modules = checkpoint.get(
-            "paper_intent_modules",
-            checkpoint.get("motion_mode_modules", checkpoint.get("timing_intent_modules", checkpoint)),
+            "motion_context_modules",
+            checkpoint.get(
+                "paper_intent_modules",
+                checkpoint.get("motion_mode_modules", checkpoint.get("timing_intent_modules", checkpoint)),
+            ),
         )
         for uid in self.possible_agents:
             state_dict = modules.get(uid) if isinstance(modules, dict) else None
@@ -437,13 +438,13 @@ class MotionContextMAPPO(MAPPO):
                 self.policies[uid].load_state_dict(state_dict, strict=strict)
 
     def save_intent_heads(self, path: str, metadata: dict | None = None, metrics: dict | None = None) -> None:
-        """offline inspection 또는 transfer용으로 paper intent policy module을 저장한다."""
+        """Offline inspection 또는 transfer용 policy module을 저장한다."""
 
         torch.save(
             {
                 "metadata": metadata or {},
                 "metrics": metrics or {},
-                "paper_intent_modules": {uid: self.policies[uid].state_dict() for uid in self.possible_agents},
+                "motion_context_modules": {uid: self.policies[uid].state_dict() for uid in self.possible_agents},
             },
             path,
         )
@@ -581,7 +582,7 @@ class MotionContextMAPPO(MAPPO):
                 self.memories[uid].add_samples(**samples)
 
     def _update(self, timestep: int, timesteps: int) -> None:
-        """paper policy/value loss만 사용하는 custom MAPPO update."""
+        """Policy/value loss만 사용하는 motion-context MAPPO update."""
 
         def compute_gae(
             rewards,
@@ -843,7 +844,7 @@ def _unwrap_env(env):
 
 
 def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContextMAPPO:
-    """policy, critic, memory, paper MAPPO agent를 구성한다."""
+    """Policy, critic, memory, motion-context MAPPO agent를 구성한다."""
 
     cfg = copy.deepcopy(experiment_cfg)
     task_env = _unwrap_env(env)
@@ -855,7 +856,7 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     communication_mode = str(getattr(task_env, "communication_mode", "motion_context"))
     intent_horizon = int(getattr(task_env, "intent_horizon", 1))
     if intent_horizon != 1:
-        raise RuntimeError("Paper motion-context intent expects intent_horizon=1.")
+        raise RuntimeError("Motion-context communication expects intent_horizon=1.")
     motion_intent_dim = int(getattr(task_env, "motion_intent_dim", cfg["models"]["policy"].get("motion_intent_dim", 3)))
     motion_context_dim = int(getattr(task_env, "motion_context_dim", cfg["models"]["policy"].get("motion_context_dim", 3)))
     communication_feature_dim = int(getattr(task_env, "communication_feature_dim", getattr(task_env, "intent_feature_dim", 0)))
@@ -955,9 +956,3 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
         device=env.device,
         cfg=agent_cfg,
     )
-
-
-# Backward-compatible names used by earlier experiment YAMLs and utility scripts.
-PaperIntentPolicyModel = MotionContextPolicyModel
-PaperIntentMAPPO = MotionContextMAPPO
-build_paper_intent_mappo_agent = build_motion_context_mappo_agent

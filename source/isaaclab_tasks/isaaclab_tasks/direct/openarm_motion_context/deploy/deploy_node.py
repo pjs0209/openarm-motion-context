@@ -2,15 +2,15 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""ROS2 deploy bridge for the Paper OpenArm Re-Lift policy.
+"""ROS2 deploy bridge for the OpenArm Lift motion-context policy.
 
 Runtime data flow:
 
 1. D435i AprilTag detector publishes ``T_camera_tag`` per camera.
 2. TF provides ``T_base_camera`` and ``T_base_ee``.
 3. The deploy pose provider estimates ``T_base_box`` and left/right grip poses.
-4. The same 30D own observation and 30D partner-message convention used by the
-   Paper Lift task is built on the real robot.
+4. The same 30D own observation and 30D partner-message convention used during
+   Lift training is built on the real robot.
 5. The policy output is applied as incremental joint-position commands.
 
 The script is intentionally independent from Isaac Sim. It reuses only the
@@ -19,11 +19,11 @@ small geometry and policy modules in ``openarm_motion_context``.
 
 from __future__ import annotations
 
-import rclpy
 import argparse
 import os
 import sys
 import time
+import types
 from pathlib import Path
 from typing import Any
 
@@ -32,9 +32,26 @@ import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 SOURCE_ROOT = REPO_ROOT / "source"
-for path in (SOURCE_ROOT / "isaaclab_tasks", SOURCE_ROOT / "isaaclab"):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+
+
+def _register_source_namespace(name: str, path: Path) -> None:
+    """Expose deploy modules without importing Isaac Lab's simulator package."""
+
+    if name in sys.modules:
+        return
+    module = types.ModuleType(name)
+    module.__path__ = [str(path)]
+    module.__package__ = name
+    sys.modules[name] = module
+
+
+TASKS_PACKAGE = SOURCE_ROOT / "isaaclab_tasks/isaaclab_tasks"
+_register_source_namespace("isaaclab_tasks", TASKS_PACKAGE)
+_register_source_namespace("isaaclab_tasks.direct", TASKS_PACKAGE / "direct")
+_register_source_namespace(
+    "isaaclab_tasks.direct.openarm_motion_context",
+    TASKS_PACKAGE / "direct/openarm_motion_context",
+)
 
 from isaaclab_tasks.direct.openarm_motion_context.perception.apriltag_geometry import (  # noqa: E402
     AprilTagDeployPoseProvider,
@@ -48,10 +65,7 @@ from isaaclab_tasks.direct.openarm_motion_context.communication.motion import si
 from isaaclab_tasks.direct.openarm_motion_context.communication.motion_context import (  # noqa: E402
     motion_context_from_raw,
 )
-from isaaclab_tasks.direct.openarm_motion_context.deploy.apriltag_ros import (  # noqa: E402
-    detection_id as _extract_detection_id,
-    detection_pose as _extract_detection_pose,
-)
+from isaaclab_tasks.direct.openarm_motion_context.deploy.apriltag_ros import detection_id as _extract_detection_id  # noqa: E402
 from isaaclab_tasks.direct.openarm_motion_context.deploy.controller import (  # noqa: E402
     incremental_joint_target,
     update_gripper_closed,
@@ -95,14 +109,6 @@ def _ros_transform_to_pose(transform, *, device: torch.device) -> tuple[torch.Te
     return pos, quat
 
 
-def _ros_pose_to_pose(pose, *, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
-    p = pose.position
-    q = pose.orientation
-    pos = torch.tensor([p.x, p.y, p.z], dtype=torch.float32, device=device)
-    quat = _xyzw_to_wxyz([q.x, q.y, q.z, q.w], device=device)
-    return pos, quat
-
-
 def _now_sec(node) -> float:
     return node.get_clock().now().nanoseconds * 1.0e-9
 
@@ -115,7 +121,7 @@ def _normalize_frame_id(frame_id: str) -> str:
 
 def _module_state_from_checkpoint(checkpoint: Any, agent: str) -> dict[str, torch.Tensor]:
     if isinstance(checkpoint, dict):
-        for key in ("paper_intent_modules", "modules", "model", "models"):
+        for key in ("motion_context_modules", "paper_intent_modules", "modules", "model", "models"):
             modules = checkpoint.get(key)
             if isinstance(modules, dict):
                 if agent in modules and isinstance(modules[agent], dict):
@@ -202,18 +208,20 @@ def _make_policy(agent: str, cfg: dict[str, Any], checkpoint: Any, *, device: to
     return model
 
 
-class OpenArmPaperReLiftDeployNode:
+class OpenArmLiftDeployNode:
     """ROS2 node that turns AprilTag detections and TF into policy commands."""
 
     def __init__(self, cfg: dict[str, Any]):
         import rclpy
         from apriltag_msgs.msg import AprilTagDetectionArray
+        from rclpy.time import Time
         from sensor_msgs.msg import JointState
         from geometry_msgs.msg import TransformStamped
         from tf2_ros import Buffer, StaticTransformBroadcaster, TransformListener
         from trajectory_msgs.msg import JointTrajectory
 
         self.rclpy = rclpy
+        self.Time = Time
         self.JointTrajectory = JointTrajectory
         self.JointTrajectoryPoint = __import__("trajectory_msgs.msg", fromlist=["JointTrajectoryPoint"]).JointTrajectoryPoint
         self.DurationMsg = __import__("builtin_interfaces.msg", fromlist=["Duration"]).Duration
@@ -263,6 +271,8 @@ class OpenArmPaperReLiftDeployNode:
 
         self.camera_names = list(cfg["frames"]["cameras"].keys())
         self.camera_frames = [str(cfg["frames"]["cameras"][name]) for name in self.camera_names]
+        tag_prefix_cfg = cfg["frames"].get("tag_frame_prefixes", {})
+        self.tag_frame_prefixes = [str(tag_prefix_cfg.get(name, "apriltag_")) for name in self.camera_names]
         mount_cfg = cfg["frames"].get("camera_mounts", {})
         self.camera_mount_frames = [str(mount_cfg.get(name, self.base_frame)) for name in self.camera_names]
         self.require_matching_detection_frame = bool(
@@ -271,9 +281,22 @@ class OpenArmPaperReLiftDeployNode:
         self._validated_camera_tf_chains: set[int] = set()
         self.tag_ids = [int(v) for v in cfg["apriltag"]["ids"]]
         self.tag_id_to_index = {tag_id: idx for idx, tag_id in enumerate(self.tag_ids)}
-        self.latest_detections: list[dict[int, tuple[float, torch.Tensor, torch.Tensor]]] = [
-            {} for _ in self.camera_names
-        ]
+        tag_frames = {
+            f"{prefix}{tag_id:02d}"
+            for prefix in self.tag_frame_prefixes
+            for tag_id in self.tag_ids
+        }
+        expected_tag_frames = len(self.tag_frame_prefixes) * len(self.tag_ids)
+        if len(tag_frames) != expected_tag_frames:
+            raise ValueError(
+                "frames.tag_frame_prefixes must produce unique AprilTag TF child frames "
+                "for every camera."
+            )
+        # Detection arrays are published immediately before apriltag_ros sends
+        # their matching TF transforms. Keep only IDs and image timestamps in
+        # the callback, then resolve T_camera_tag from the control tick after
+        # TF has reached the listener buffer.
+        self.latest_detection_stamps: list[dict[int, float]] = [{} for _ in self.camera_names]
         for camera_index, camera_name in enumerate(self.camera_names):
             topic = topics["apriltag"][camera_name]
             self.node.create_subscription(
@@ -378,27 +401,17 @@ class OpenArmPaperReLiftDeployNode:
             self.node.get_logger().warn(message, throttle_duration_sec=2.0)
 
         stamp = self._message_stamp_sec(msg)
-        detections = {}
+        detections: dict[int, float] = {}
         for detection in msg.detections:
             tag_id = _extract_detection_id(detection)
             if tag_id not in self.tag_id_to_index:
                 continue
-
-            tag_frame = f"apriltag_{tag_id:02d}"
-            pose = self._lookup_transform_pose(
-                self.camera_frames[camera_index],
-                tag_frame,
-                None,
-            )
-            if pose is None:
-                continue
-
             tag_index = self.tag_id_to_index[tag_id]
-            detections[tag_index] = (stamp, pose[0], pose[1])
+            detections[tag_index] = stamp
         # All detections in one array share the same image timestamp. Replace
         # the camera snapshot so a tag left over from an older image is never
         # transformed with the current wrist-camera pose.
-        self.latest_detections[camera_index] = detections
+        self.latest_detection_stamps[camera_index] = detections
 
     def _lookup_transform_pose(
         self,
@@ -408,9 +421,9 @@ class OpenArmPaperReLiftDeployNode:
     ) -> tuple[torch.Tensor, torch.Tensor] | None:
         try:
             stamp = (
-                self.rclpy.time.Time()
+                self.Time()
                 if stamp_sec is None
-                else self.rclpy.time.Time(nanoseconds=max(0, int(stamp_sec * 1.0e9)))
+                else self.Time(nanoseconds=max(0, int(stamp_sec * 1.0e9)))
             )
             transform = self.tf_buffer.lookup_transform(parent_frame, child_frame, stamp)
         except Exception as exc:
@@ -486,10 +499,17 @@ class OpenArmPaperReLiftDeployNode:
         camera_stamps: list[float | None] = [None] * num_cameras
         now = _now_sec(self.node)
         max_detection_age = self._safety_cfg("max_detection_age", 0.35)
-        for camera_idx, detection_map in enumerate(self.latest_detections):
-            for tag_idx, (stamp, pos, quat) in detection_map.items():
+        for camera_idx, detection_map in enumerate(self.latest_detection_stamps):
+            camera_frame = self.camera_frames[camera_idx]
+            for tag_idx, stamp in detection_map.items():
                 if not message_is_fresh(now, stamp, max_detection_age):
                     continue
+                tag_id = self.tag_ids[tag_idx]
+                tag_frame = f"{self.tag_frame_prefixes[camera_idx]}{tag_id:02d}"
+                pose = self._lookup_transform_pose(camera_frame, tag_frame, stamp)
+                if pose is None:
+                    continue
+                pos, quat = pose
                 tag_pos_camera[camera_idx, tag_idx] = pos
                 tag_quat_camera[camera_idx, tag_idx] = quat
                 visible[camera_idx, tag_idx] = 1.0
@@ -815,6 +835,8 @@ def main() -> None:
     parser.add_argument("--publish", action="store_true", help="Publish JointTrajectory commands")
     args = parser.parse_args()
 
+    import rclpy
+
     cfg = _load_yaml(args.config)
     if args.checkpoint is not None:
         cfg["checkpoint"] = args.checkpoint
@@ -825,7 +847,7 @@ def main() -> None:
 
     rclpy.init()
 
-    node = OpenArmPaperReLiftDeployNode(cfg)
+    node = OpenArmLiftDeployNode(cfg)
     node.spin()
 
 if __name__ == "__main__":
