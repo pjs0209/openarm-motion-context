@@ -35,33 +35,31 @@ cp -a /path/to/openarm-motion-context/scripts/. scripts/
 ```
 
 All implementation and configuration lives under
-`isaaclab_tasks.direct.openarm_motion_context`. The old
-`isaaclab_tasks.direct.paper` compatibility wrappers are intentionally not
-included in this standalone repository.
+`isaaclab_tasks.direct.openarm_motion_context`.
 
 ## Assets
 
-USD assets are not included because the current local files contain unresolved
-external references and need a separate license/relinking pass. Set
-`OPENARM_ASSET_DIR` to a directory containing:
+OpenArm assets are grouped by responsibility in the Isaac Lab asset extension:
 
 ```text
-openarm_robot_with_camera_fixed.usda
-openarm_env_box.usd
-openarm_env_peg_in_hole.usd
+source/isaaclab_assets/data/Robots/OpenArm
+source/isaaclab_assets/data/Sensors/OpenArm
+source/isaaclab_assets/data/Environments/OpenArm/{lift,peg_in_hole}
+source/isaaclab_assets/data/Objects/OpenArm/peg_in_hole
 ```
 
-The robot USD must also be able to resolve its referenced camera and robot
-assets.
+The bundled paths are used by default. Separate overrides are available when
+assets live elsewhere:
 
 ```bash
-export OPENARM_ASSET_DIR=/absolute/path/to/assets/openarm
+export OPENARM_ROBOT_ASSET_DIR=/absolute/path/to/Robots/OpenArm
+export OPENARM_SENSOR_ASSET_DIR=/absolute/path/to/Sensors/OpenArm
+export OPENARM_ENVIRONMENT_ASSET_DIR=/absolute/path/to/Environments/OpenArm
+export OPENARM_OBJECT_ASSET_DIR=/absolute/path/to/Objects/OpenArm
 ```
 
-When the repository is overlaid into an `IsaacLab` workspace, the task first
-tries the standard sibling path `../assets/openarm`. Set the environment
-variable explicitly when assets use a different layout. If neither location is
-valid, the task fails immediately with the paths and required filenames.
+The legacy `OPENARM_ASSET_DIR` variable is retained only for workspaces where
+all asset categories still share one directory.
 
 ## Train
 
@@ -69,8 +67,7 @@ Lift:
 
 ```bash
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/train_openarm_bimanual_direct.py \
-  --task Isaac-OpenArm-Re-Lift-Paper-v0 \
-  --intent_variant share_intent \
+  --task Isaac-OpenArm-Lift-v0 \
   --experiment_tag motion_context \
   --num_envs 128 \
   --headless \
@@ -81,8 +78,7 @@ Peg-in-hole:
 
 ```bash
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/train_openarm_bimanual_direct.py \
-  --task Isaac-OpenArm-PegInHole-Fixed-Paper-v0 \
-  --intent_variant share_intent \
+  --task Isaac-OpenArm-PegInHole-v0 \
   --experiment_tag motion_context \
   --num_envs 128 \
   --headless \
@@ -104,14 +100,13 @@ full_partner_observation
 
 ```bash
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/play_openarm_bimanual_direct.py \
-  --task Isaac-OpenArm-Re-Lift-Paper-v0 \
-  --intent_variant share_intent \
+  --task Isaac-OpenArm-Lift-v0 \
   --num_envs 1 \
   --num_steps 9000 \
   --num_eval_episodes 10 \
   --deterministic_eval \
-  --save_mode_trace \
-  --mode_trace_dir logs/paper_motion_context_traces/lift_motion_context \
+  --save_motion_context_trace \
+  --motion_context_trace_dir logs/motion_context_traces/lift_motion_context \
   --checkpoint /path/to/best_agent.pt \
   env.communication_mode=motion_context
 ```
@@ -119,10 +114,13 @@ full_partner_observation
 Analyze traces without launching Isaac Sim:
 
 ```bash
-python scripts/analyze_paper_motion_context_trace.py \
-  --trace_dir logs/paper_motion_context_traces/lift_motion_context \
-  --out_dir logs/paper_motion_context_analysis
+python scripts/analyze_motion_context_trace.py \
+  --trace_dir logs/motion_context_traces/lift_motion_context \
+  --out_dir logs/motion_context_analysis
 ```
+
+The analyzer writes episode, seed, method, failure, timing, payload-statistics,
+and schema-validation CSV files plus paper-ready overview and ablation figures.
 
 ## Real-Robot Deployment
 

@@ -10,9 +10,6 @@ runtime:
 models:
   separate: True
   policy:
-    # communication_mode is configured by the env. intent_variant remains a CLI/checkpoint alias.
-    intent_variant: share_intent
-    intent_arch: shared_intent_encoder
     communication_mode: motion_context
     class: GaussianMixin
     clip_actions: True
@@ -70,26 +67,22 @@ agent:
   clip_predicted_values: True
   entropy_loss_scale: 0.015
   value_loss_scale: 2.0
-  intent_variant: share_intent
-  intent_arch: shared_intent_encoder
   kl_threshold: 0.0
   rewards_shaper_scale: 1.0
   time_limit_bootstrap: False
   experiment:
-    directory: "openarm_paper_peg_in_hole_fixed"
+    directory: "openarm_peg_in_hole"
     experiment_name: ""
     write_interval: 32
     checkpoint_interval: 5000
 
 trainer:
   class: SequentialTrainer
-  intent_variant: share_intent
-  intent_arch: shared_intent_encoder
   timesteps: 240000
   environment_info: log
   debug_interval: 500
   save_mode_trace: False
-  mode_trace_dir: "logs/paper_motion_context_traces"
+  mode_trace_dir: "logs/motion_context_traces"
   mode_trace_env_index: 0
   mode_trace_format: "json"
   num_trace_episodes: 50

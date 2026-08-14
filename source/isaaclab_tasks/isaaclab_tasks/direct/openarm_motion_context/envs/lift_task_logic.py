@@ -501,6 +501,39 @@ def refresh_apriltag_targets_from_usd(env, ctx: dict, env_ids: torch.Tensor | No
                 f"position_error={float(pos_error):.6f}m "
                 f"rotation_error={float(torch.rad2deg(rot_error)):.4f}deg"
             )
+
+        gt_left, gt_right, gt_left_q, gt_right_q = compute_collision_target_poses_w(env, ctx)
+        actor_left, actor_right, actor_left_q, actor_right_q = estimate_collision_target_poses_from_apriltags_w(
+            env,
+            ctx,
+        )
+        left_pos_error = torch.linalg.vector_norm(actor_left - gt_left, dim=-1)
+        right_pos_error = torch.linalg.vector_norm(actor_right - gt_right, dim=-1)
+        left_rot_error = torch.rad2deg(quat_error_magnitude(actor_left_q, gt_left_q))
+        right_rot_error = torch.rad2deg(quat_error_magnitude(actor_right_q, gt_right_q))
+        max_position_error = torch.maximum(left_pos_error.max(), right_pos_error.max())
+        max_rotation_error = torch.maximum(left_rot_error.max(), right_rot_error.max())
+        print(
+            "  grasp_target_round_trip_check "
+            f"position_error_max={float(max_position_error):.8f}m "
+            f"rotation_error_max={float(max_rotation_error):.6f}deg"
+        )
+
+        clean_virtual_measurement = (
+            str(getattr(env.cfg, "apriltag_measurement_source", "camera_transform")).lower()
+            == "camera_transform"
+            and float(getattr(env.cfg, "apriltag_sim_position_noise_std", 0.0)) == 0.0
+            and float(getattr(env.cfg, "apriltag_sim_rotation_noise_deg", 0.0)) == 0.0
+            and float(getattr(env.cfg, "apriltag_sim_dropout_prob", 0.0)) == 0.0
+            and int(getattr(env.cfg, "apriltag_sim_latency_steps", 0)) == 0
+        )
+        if clean_virtual_measurement and (
+            float(max_position_error) > 1.0e-4 or float(max_rotation_error) > 1.0e-2
+        ):
+            raise RuntimeError(
+                "Clean AprilTag grasp-target round trip does not match the USD/object target: "
+                f"position={float(max_position_error):.8f}m, rotation={float(max_rotation_error):.6f}deg."
+            )
         ctx["_printed_apriltag_debug"] = True
 
 
@@ -1315,18 +1348,15 @@ def _object_success_rpy_deg(env, ctx: dict) -> tuple[torch.Tensor, torch.Tensor,
     return _quat_to_rpy_deg(relative_quat)
 
 
-def _object_success_tilt_ok(env, ctx: dict) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Check success orientation with separate roll/pitch and yaw thresholds."""
+def _object_success_tilt_ok(
+    env, ctx: dict
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Check local object up-axis against world vertical; keep RPY as diagnostics."""
 
     roll_deg, pitch_deg, yaw_deg = _object_success_rpy_deg(env, ctx)
-    roll_pitch_limit = float(env.cfg.success_roll_pitch_threshold)
-    yaw_limit = float(env.cfg.success_yaw_threshold)
-    tilt_ok = (
-        (roll_deg.abs() < roll_pitch_limit)
-        & (pitch_deg.abs() < roll_pitch_limit)
-        & (yaw_deg.abs() < yaw_limit)
-    )
-    return tilt_ok, roll_deg, pitch_deg, yaw_deg
+    tilt_deg, _ = _object_tilt(env)
+    tilt_ok = tilt_deg <= float(env.cfg.success_tilt_threshold_deg)
+    return tilt_ok, tilt_deg, roll_deg, pitch_deg, yaw_deg
 
 
 def _target_inside_gripper_score(
@@ -1405,6 +1435,20 @@ def compute_openarm_re_rewards(env, ctx: dict) -> dict[str, torch.Tensor]:
     obj = ctx["object"]
 
     left_target_w, right_target_w, left_target_q_w, right_target_q_w = compute_collision_target_poses_w(env, ctx)
+    (
+        left_actor_target_w,
+        right_actor_target_w,
+        left_actor_target_q_w,
+        right_actor_target_q_w,
+    ) = compute_actor_collision_target_poses_w(env, ctx)
+
+    # The reward keeps using the rigid-object pose, while the actor reaches the
+    # AprilTag-derived target. Their disagreement is the end-to-end perception
+    # and TF error that matters to learning and deployment.
+    left_actor_target_pos_error = torch.linalg.vector_norm(left_actor_target_w - left_target_w, dim=-1)
+    right_actor_target_pos_error = torch.linalg.vector_norm(right_actor_target_w - right_target_w, dim=-1)
+    left_actor_target_rot_error = quat_error_magnitude(left_actor_target_q_w, left_target_q_w)
+    right_actor_target_rot_error = quat_error_magnitude(right_actor_target_q_w, right_target_q_w)
 
     left_ee_pos_w = robot.data.body_pos_w[:, ctx["left_ee_body_id"]]
     right_ee_pos_w = robot.data.body_pos_w[:, ctx["right_ee_body_id"]]
@@ -1417,6 +1461,8 @@ def compute_openarm_re_rewards(env, ctx: dict) -> dict[str, torch.Tensor]:
     # 1. Reach reward: each EE approaches its USD-authored collision target.
     left_dist = torch.linalg.vector_norm(left_ee_pos_w - left_target_w, dim=-1)
     right_dist = torch.linalg.vector_norm(right_ee_pos_w - right_target_w, dim=-1)
+    left_actor_dist = torch.linalg.vector_norm(left_ee_pos_w - left_actor_target_w, dim=-1)
+    right_actor_dist = torch.linalg.vector_norm(right_ee_pos_w - right_actor_target_w, dim=-1)
     reach_std = max(float(env.cfg.reach_std), 1.0e-6)
     left_reach = 1.0 - torch.tanh(left_dist / reach_std)
     right_reach = 1.0 - torch.tanh(right_dist / reach_std)
@@ -1465,6 +1511,37 @@ def compute_openarm_re_rewards(env, ctx: dict) -> dict[str, torch.Tensor]:
         right_inner_finger_pos_w,
         right_outer_finger_pos_w,
     )
+
+    # Finger rigid-body origins are located behind the TCP on this gripper.
+    # Keep the existing reward unchanged, but also diagnose the same finger
+    # span translated onto the TCP plane. This distinguishes a bad grasp target
+    # from a visualization artifact caused by comparing against body origins.
+    left_finger_origin_midpoint = 0.5 * (left_inner_finger_pos_w + left_outer_finger_pos_w)
+    right_finger_origin_midpoint = 0.5 * (right_inner_finger_pos_w + right_outer_finger_pos_w)
+    left_tcp_from_finger_origin = left_ee_pos_w - left_finger_origin_midpoint
+    right_tcp_from_finger_origin = right_ee_pos_w - right_finger_origin_midpoint
+    (
+        left_target_inside_tcp_plane,
+        _,
+        _,
+        left_target_to_tcp_plane_dist,
+    ) = _target_inside_gripper_score(
+        env,
+        left_target_w,
+        left_inner_finger_pos_w + left_tcp_from_finger_origin,
+        left_outer_finger_pos_w + left_tcp_from_finger_origin,
+    )
+    (
+        right_target_inside_tcp_plane,
+        _,
+        _,
+        right_target_to_tcp_plane_dist,
+    ) = _target_inside_gripper_score(
+        env,
+        right_target_w,
+        right_inner_finger_pos_w + right_tcp_from_finger_origin,
+        right_outer_finger_pos_w + right_tcp_from_finger_origin,
+    )
     near_distance_scale = 0.08
     left_near_collision_target = torch.exp(-left_dist / near_distance_scale)
     right_near_collision_target = torch.exp(-right_dist / near_distance_scale)
@@ -1487,9 +1564,8 @@ def compute_openarm_re_rewards(env, ctx: dict) -> dict[str, torch.Tensor]:
     left_grasp_hint = torch.sqrt(left_grasp_hint_raw.clamp_min(0.0))
     right_grasp_hint = torch.sqrt(right_grasp_hint_raw.clamp_min(0.0))
 
-    # Object lift/goal rewards require the weaker learned grasp hint and the
-    # weaker measured closure, keeping grasp readiness and hold tightness
-    # separated in the cooperative lift gate.
+    # Cooperative grasp and lift use the weaker arm so neither arm can earn
+    # object-level progress by acting alone.
     dual_grasp_gate = torch.minimum(left_grasp_hint, right_grasp_hint).detach()
     team_closure = torch.minimum(left_closure, right_closure)
     raw_lift_gate = dual_grasp_gate * team_closure
@@ -1501,12 +1577,10 @@ def compute_openarm_re_rewards(env, ctx: dict) -> dict[str, torch.Tensor]:
     height_delta = object_z - initial_z
     lift = torch.clamp(height_delta / max(float(env.cfg.lift_target_height), 1.0e-6), 0.0, 1.0)
 
-    # 5. Center/goal reward: once lifted, preserve the reset Y center.
+    # Keep center drift as a diagnostic, not as an additional reward term.
     y_error = torch.abs(object_pos_w[:, 1] - ctx["target_object_xy_w"][:, 1])
-    lift_gate = (dual_lift_gate * lift).detach()
-    goal = lift_gate * (1.0 - torch.tanh(y_error / max(float(env.cfg.goal_std), 1.0e-6)))
 
-    # 6. Tilt-aware lift quality. Tilt is folded into lift reward instead of
+    # 5. Tilt-aware lift quality. Tilt is folded into lift reward instead of
     # being applied as a separate negative reward term.
     world_z = torch.tensor([0.0, 0.0, 1.0], device=env.device).expand(env.num_envs, -1)
     object_up = quat_apply(object_quat_w, world_z)
@@ -1516,81 +1590,86 @@ def compute_openarm_re_rewards(env, ctx: dict) -> dict[str, torch.Tensor]:
     tilt_bad = float(env.cfg.tilt_bad_deg)
     tilt_range = max(tilt_bad - tilt_free, 1.0e-6)
     tilt_penalty = torch.clamp((tilt_deg - tilt_free) / tilt_range, 0.0, 1.0).square()
-    _, _, object_yaw_deg = _object_success_rpy_deg(env, ctx)
-    object_yaw_error_deg = object_yaw_deg.abs()
-    yaw_free = float(env.cfg.success_yaw_threshold)
-    yaw_bad = max(float(env.cfg.tilt_bad_deg), yaw_free + 1.0e-6)
-    yaw_penalty = torch.clamp((object_yaw_error_deg - yaw_free) / (yaw_bad - yaw_free), 0.0, 1.0).square()
-    tilt_penalty = torch.clamp(tilt_penalty + 0.25 * yaw_penalty, 0.0, 1.0)
     tilt_quality = (1.0 - tilt_penalty).clamp(0.0, 1.0).square()
     tilt_aware_lift = dual_lift_gate * lift * tilt_quality
 
-    # 7. Smoothness penalties.
+    # 6. Action-rate regularization.
     action_dim = get_agent_action_dim(env)
     left_action_rate = _agent_action_rate(env, "left_arm", action_dim)
     right_action_rate = _agent_action_rate(env, "right_arm", action_dim)
 
-    left_joint_vel = robot.data.joint_vel[:, ctx["left_arm_joint_ids"]]
-    right_joint_vel = robot.data.joint_vel[:, ctx["right_arm_joint_ids"]]
-    left_joint_vel_penalty = left_joint_vel.square().mean(dim=-1)
-    right_joint_vel_penalty = right_joint_vel.square().mean(dim=-1)
-
     team_reach = 0.5 * (left_reach + right_reach)
-    team_orientation = 0.5 * (left_orientation + right_orientation)
-    team_grasp_hint = 0.5 * (left_grasp_hint + right_grasp_hint)
+    team_grasp_hint = dual_grasp_gate
     team_action_rate = 0.5 * (left_action_rate + right_action_rate)
-    team_joint_vel_penalty = 0.5 * (left_joint_vel_penalty + right_joint_vel_penalty)
 
     height_ok = height_delta > float(env.cfg.success_height_margin)
-    tilt_ok, success_roll_deg, success_pitch_deg, success_yaw_deg = _object_success_tilt_ok(env, ctx)
+    tilt_ok, success_tilt_deg, success_roll_deg, success_pitch_deg, success_yaw_deg = (
+        _object_success_tilt_ok(env, ctx)
+    )
     success_roll_pitch_deg = torch.maximum(success_roll_deg.abs(), success_pitch_deg.abs())
     success_now = height_ok & tilt_ok
-
+    terminal_success = success_now & (
+        ctx["success_hold_count"] == max(int(env.cfg.hold_required_steps) - 1, 0)
+    )
     shared_object_reward = (
-        + float(env.cfg.reward_lift_scale) * tilt_aware_lift
-        + float(env.cfg.reward_goal_scale) * goal
-        + float(env.cfg.reward_stability_scale) * success_now.float()
+        float(env.cfg.reward_lift_scale) * tilt_aware_lift
+        + float(env.cfg.reward_success_scale) * terminal_success.float()
     )
     left_reward_raw = (
         float(env.cfg.reward_reach_scale) * left_reach
-        + float(env.cfg.reward_orientation_scale) * left_orientation
         + float(env.cfg.reward_grasp_scale) * left_grasp_hint
         + shared_object_reward
         - float(env.cfg.reward_action_rate_scale) * left_action_rate
-        - float(env.cfg.reward_joint_vel_scale) * left_joint_vel_penalty
     )
     right_reward_raw = (
         float(env.cfg.reward_reach_scale) * right_reach
-        + float(env.cfg.reward_orientation_scale) * right_orientation
         + float(env.cfg.reward_grasp_scale) * right_grasp_hint
         + shared_object_reward
         - float(env.cfg.reward_action_rate_scale) * right_action_rate
-        - float(env.cfg.reward_joint_vel_scale) * right_joint_vel_penalty
     )
     left_reward_raw = torch.nan_to_num(left_reward_raw, nan=0.0, posinf=0.0, neginf=0.0)
     right_reward_raw = torch.nan_to_num(right_reward_raw, nan=0.0, posinf=0.0, neginf=0.0)
 
     team_reward = (
         float(env.cfg.reward_reach_scale) * team_reach
-        + float(env.cfg.reward_orientation_scale) * team_orientation
         + float(env.cfg.reward_grasp_scale) * team_grasp_hint
         + shared_object_reward
         - float(env.cfg.reward_action_rate_scale) * team_action_rate
-        - float(env.cfg.reward_joint_vel_scale) * team_joint_vel_penalty
     )
     team_reward = torch.nan_to_num(team_reward, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Paper grouping is debug-only: the actual scalar reward above keeps the
-    # incremental reward terms and weights unchanged.
-    progress = 0.5 * team_reach + 0.5 * team_grasp_hint
-    center_quality = 1.0 - torch.tanh(y_error / max(float(env.cfg.goal_std), 1.0e-6))
-    quality = tilt_aware_lift * (0.8 + 0.2 * center_quality)
-    regularization = (
-        float(env.cfg.reward_action_rate_scale) * team_action_rate
-        + float(env.cfg.reward_joint_vel_scale) * team_joint_vel_penalty
-    )
+    # Keep per-environment trace values separate from debug_stats, whose
+    # entries are batch means intended only for console logging.
+    ctx["trace_signals"] = {
+        "left_grasp_hint": left_grasp_hint.detach(),
+        "right_grasp_hint": right_grasp_hint.detach(),
+        "dual_lift_gate": dual_lift_gate.detach(),
+        "tilt_aware_lift": tilt_aware_lift.detach(),
+        "terminal_success": terminal_success.detach(),
+        "object_tilt_deg": tilt_deg.detach(),
+        "success_tilt_deg": success_tilt_deg.detach(),
+        "success_roll_deg": success_roll_deg.detach(),
+        "success_pitch_deg": success_pitch_deg.detach(),
+        "success_roll_pitch_deg": success_roll_pitch_deg.detach(),
+        "success_yaw_deg": success_yaw_deg.detach(),
+        "xy_error": y_error.detach(),
+        "left_reward": left_reward_raw.detach(),
+        "right_reward": right_reward_raw.detach(),
+    }
 
+    # Paper grouping mirrors the four reward concepts used by the policy.
+    progress = 0.5 * team_reach + 0.5 * team_grasp_hint
+    quality = tilt_aware_lift
+    regularization = float(env.cfg.reward_action_rate_scale) * team_action_rate
+    reward_reach_term = float(env.cfg.reward_reach_scale) * team_reach
+    reward_grasp_term = float(env.cfg.reward_grasp_scale) * team_grasp_hint
+    reward_lift_term = float(env.cfg.reward_lift_scale) * tilt_aware_lift
+    reward_success_term = float(env.cfg.reward_success_scale) * terminal_success.float()
+    reward_action_term = float(env.cfg.reward_action_rate_scale) * team_action_rate
+
+    previous_debug_stats = dict(ctx.get("debug_stats", {}))
     ctx["debug_stats"] = {
+        **previous_debug_stats,
         "team_reward": team_reward.mean().item(),
         "left_reward": left_reward_raw.mean().item(),
         "right_reward": right_reward_raw.mean().item(),
@@ -1598,22 +1677,50 @@ def compute_openarm_re_rewards(env, ctx: dict) -> dict[str, torch.Tensor]:
         "right_reward_raw": right_reward_raw.mean().item(),
         "paper/progress": progress.mean().item(),
         "paper/quality": quality.mean().item(),
-        "paper/success": success_now.float().mean().item(),
-        "paper/stability_bonus": (
-            float(env.cfg.reward_stability_scale) * success_now.float()
+        "paper/success": terminal_success.float().mean().item(),
+        "paper/terminal_success_bonus": (
+            float(env.cfg.reward_success_scale) * terminal_success.float()
         ).mean().item(),
-        "stability_bonus": (
-            float(env.cfg.reward_stability_scale) * success_now.float()
+        "terminal_success_bonus": (
+            float(env.cfg.reward_success_scale) * terminal_success.float()
         ).mean().item(),
         "paper/regularization": regularization.mean().item(),
+        "reward_reach_term": reward_reach_term.mean().item(),
+        "reward_grasp_term": reward_grasp_term.mean().item(),
+        "reward_lift_term": reward_lift_term.mean().item(),
+        "reward_success_term": reward_success_term.mean().item(),
+        "reward_action_term": reward_action_term.mean().item(),
         "left_reach": left_reach.mean().item(),
         "right_reach": right_reach.mean().item(),
         "reach": team_reach.mean().item(),
         "left_dist": left_dist.mean().item(),
         "right_dist": right_dist.mean().item(),
+        "left_actor_dist": left_actor_dist.mean().item(),
+        "right_actor_dist": right_actor_dist.mean().item(),
+        "left_actor_target_pos_error": left_actor_target_pos_error.mean().item(),
+        "right_actor_target_pos_error": right_actor_target_pos_error.mean().item(),
+        "left_actor_target_pos_error_max": left_actor_target_pos_error.max().item(),
+        "right_actor_target_pos_error_max": right_actor_target_pos_error.max().item(),
+        "left_actor_target_rot_error_deg": torch.rad2deg(left_actor_target_rot_error).mean().item(),
+        "right_actor_target_rot_error_deg": torch.rad2deg(right_actor_target_rot_error).mean().item(),
+        "left_target_local_x": ctx["left_target_local_pos"][:, 0].mean().item(),
+        "left_target_local_y": ctx["left_target_local_pos"][:, 1].mean().item(),
+        "left_target_local_z": ctx["left_target_local_pos"][:, 2].mean().item(),
+        "right_target_local_x": ctx["right_target_local_pos"][:, 0].mean().item(),
+        "right_target_local_y": ctx["right_target_local_pos"][:, 1].mean().item(),
+        "right_target_local_z": ctx["right_target_local_pos"][:, 2].mean().item(),
+        "sample_object_x": object_pos_w[0, 0].item(),
+        "sample_object_y": object_pos_w[0, 1].item(),
+        "sample_object_z": object_pos_w[0, 2].item(),
+        "sample_left_actor_target_x": left_actor_target_w[0, 0].item(),
+        "sample_left_actor_target_y": left_actor_target_w[0, 1].item(),
+        "sample_left_actor_target_z": left_actor_target_w[0, 2].item(),
+        "sample_right_actor_target_x": right_actor_target_w[0, 0].item(),
+        "sample_right_actor_target_y": right_actor_target_w[0, 1].item(),
+        "sample_right_actor_target_z": right_actor_target_w[0, 2].item(),
         "left_orientation": left_orientation.mean().item(),
         "right_orientation": right_orientation.mean().item(),
-        "orientation": team_orientation.mean().item(),
+        "orientation": (0.5 * (left_orientation + right_orientation)).mean().item(),
         "left_ori_err": left_ori_err.mean().item(),
         "right_ori_err": right_ori_err.mean().item(),
         "grasp_hint": team_grasp_hint.mean().item(),
@@ -1640,27 +1747,33 @@ def compute_openarm_re_rewards(env, ctx: dict) -> dict[str, torch.Tensor]:
         "right_target_centered_between_fingers": right_target_centered_in_gripper.mean().item(),
         "left_target_to_gripper_midline_dist": left_target_to_gripper_midline_dist.mean().item(),
         "right_target_to_gripper_midline_dist": right_target_to_gripper_midline_dist.mean().item(),
+        "left_tcp_from_finger_origin_dist": torch.linalg.vector_norm(
+            left_tcp_from_finger_origin, dim=-1
+        ).mean().item(),
+        "right_tcp_from_finger_origin_dist": torch.linalg.vector_norm(
+            right_tcp_from_finger_origin, dim=-1
+        ).mean().item(),
+        "left_target_inside_tcp_plane": left_target_inside_tcp_plane.mean().item(),
+        "right_target_inside_tcp_plane": right_target_inside_tcp_plane.mean().item(),
+        "left_target_to_tcp_plane_dist": left_target_to_tcp_plane_dist.mean().item(),
+        "right_target_to_tcp_plane_dist": right_target_to_tcp_plane_dist.mean().item(),
         "lift": lift.mean().item(),
         "tilt_aware_lift": tilt_aware_lift.mean().item(),
         "object_height_delta": height_delta.mean().item(),
-        "goal": goal.mean().item(),
         "xy_error": y_error.mean().item(),
         "y_error": y_error.mean().item(),
         "object_tilt_deg": tilt_deg.mean().item(),
         "tilt_quality": tilt_quality.mean().item(),
+        "success_tilt_deg": success_tilt_deg.mean().item(),
         "success_roll_deg": success_roll_deg.abs().mean().item(),
         "success_pitch_deg": success_pitch_deg.abs().mean().item(),
         "success_roll_pitch_deg": success_roll_pitch_deg.mean().item(),
         "success_yaw_deg": success_yaw_deg.abs().mean().item(),
-        "raw_yaw_penalty": yaw_penalty.mean().item(),
-        "tilt_penalty": (lift_gate * tilt_penalty).mean().item(),
+        "tilt_penalty": (dual_lift_gate * lift * tilt_penalty).mean().item(),
         "raw_tilt_penalty": tilt_penalty.mean().item(),
         "left_action_rate_penalty": left_action_rate.mean().item(),
         "right_action_rate_penalty": right_action_rate.mean().item(),
         "action_rate_penalty": team_action_rate.mean().item(),
-        "left_joint_vel_penalty": left_joint_vel_penalty.mean().item(),
-        "right_joint_vel_penalty": right_joint_vel_penalty.mean().item(),
-        "joint_vel_penalty": team_joint_vel_penalty.mean().item(),
         "height_ok_ratio": height_ok.float().mean().item(),
         "tilt_ok_ratio": tilt_ok.float().mean().item(),
         "stable_now_ratio": success_now.float().mean().item(),
@@ -1686,7 +1799,7 @@ def compute_openarm_re_terminations(env, ctx: dict) -> tuple[torch.Tensor, torch
     height_delta = env.object.data.root_pos_w[:, 2] - ctx["initial_object_pos_w"][:, 2]
     tilt_deg, _ = _object_tilt(env)
     height_ok = height_delta > float(env.cfg.success_height_margin)
-    tilt_ok, _, _, _ = _object_success_tilt_ok(env, ctx)
+    tilt_ok, _, _, _, _ = _object_success_tilt_ok(env, ctx)
     hold_now = height_ok & tilt_ok
     ctx["success_hold_count"] = torch.where(
         hold_now,
@@ -1713,6 +1826,14 @@ def compute_openarm_re_terminations(env, ctx: dict) -> tuple[torch.Tensor, torch
     ctx["termination_far"] = far
     ctx["termination_tilt_fail"] = tilt_fail
     ctx["termination_invalid"] = invalid
+    ctx.setdefault("trace_signals", {}).update(
+        {
+            "termination_drop": drop.detach(),
+            "termination_far": far.detach(),
+            "termination_tilt_fail": tilt_fail.detach(),
+            "termination_invalid": invalid.detach(),
+        }
+    )
     ctx.setdefault("debug_stats", {}).update(
         {
             "termination_drop_ratio": drop.float().mean().item(),
@@ -1742,7 +1863,6 @@ def collect_openarm_re_trace_signals(env, ctx: dict, env_index: int = 0) -> dict
     idx = int(max(0, min(int(env_index), int(env.num_envs) - 1)))
     left_own = _agent_observation(env, ctx, "left")
     right_own = _agent_observation(env, ctx, "right")
-    log = ctx.get("debug_stats", {})
     object_z = env.object.data.root_pos_w[:, 2]
     object_dz = object_z - ctx["initial_object_pos_w"][:, 2]
     lift = torch.clamp(object_dz / max(float(env.cfg.lift_target_height), 1.0e-6), 0.0, 1.0)
@@ -1762,8 +1882,9 @@ def collect_openarm_re_trace_signals(env, ctx: dict, env_index: int = 0) -> dict
             return float(tensor[idx].detach().cpu())
         return float(tensor.reshape(-1)[0].detach().cpu())
 
-    def log_scalar(name: str, default: float = 0.0) -> float:
-        return env_scalar(log.get(name, default), default)
+    def trace_scalar(name: str, default: float = 0.0) -> float:
+        value = ctx.get("trace_signals", {}).get(name)
+        return env_scalar(value, default) if value is not None else default
 
     def obs_scalar(obs: torch.Tensor, column: int) -> float:
         return float(obs[idx, column].detach().cpu())
@@ -1796,12 +1917,8 @@ def collect_openarm_re_trace_signals(env, ctx: dict, env_index: int = 0) -> dict
     left_context = motion_context["left_arm"][idx].detach().float().cpu().tolist()
     right_context = motion_context["right_arm"][idx].detach().float().cpu().tolist()
     height_ok = float(object_dz[idx].detach().cpu()) > float(env.cfg.success_height_margin)
-    tilt_ok = (
-        log_scalar("success_roll_deg") < float(env.cfg.success_roll_pitch_threshold)
-        and log_scalar("success_pitch_deg") < float(env.cfg.success_roll_pitch_threshold)
-        and log_scalar("success_yaw_deg") < float(env.cfg.success_yaw_threshold)
-    )
-    dual_grasp_ok = log_scalar("dual_lift_gate") > 0.0
+    tilt_ok = trace_scalar("success_tilt_deg") <= float(env.cfg.success_tilt_threshold_deg)
+    dual_grasp_ok = trace_scalar("dual_lift_gate") > 0.0
     hold_ok = int(ctx["success_hold_count"][idx].detach().cpu()) > 0
     strict_success = int(ctx["success_hold_count"][idx].detach().cpu()) >= int(env.cfg.hold_required_steps)
 
@@ -1839,17 +1956,18 @@ def collect_openarm_re_trace_signals(env, ctx: dict, env_index: int = 0) -> dict
         "right_contact_min": 0.0,
         "left_force_min": 0.0,
         "right_force_min": 0.0,
-        "left_grip_score": log_scalar("left_grasp_hint"),
-        "right_grip_score": log_scalar("right_grasp_hint"),
-        "left_lift_reward": log_scalar("tilt_aware_lift"),
-        "right_lift_reward": log_scalar("tilt_aware_lift"),
-        "object_tilt_deg": log_scalar("object_tilt_deg"),
-        "success_roll_deg": log_scalar("success_roll_deg"),
-        "success_pitch_deg": log_scalar("success_pitch_deg"),
-        "success_roll_pitch_deg": log_scalar("success_roll_pitch_deg"),
-        "success_yaw_deg": log_scalar("success_yaw_deg"),
-        "goal_error": log_scalar("xy_error"),
-        "xy_error": log_scalar("xy_error"),
+        "left_grip_score": trace_scalar("left_grasp_hint"),
+        "right_grip_score": trace_scalar("right_grasp_hint"),
+        "left_lift_reward": trace_scalar("tilt_aware_lift"),
+        "right_lift_reward": trace_scalar("tilt_aware_lift"),
+        "object_tilt_deg": trace_scalar("object_tilt_deg"),
+        "success_tilt_deg": trace_scalar("success_tilt_deg"),
+        "success_roll_deg": trace_scalar("success_roll_deg"),
+        "success_pitch_deg": trace_scalar("success_pitch_deg"),
+        "success_roll_pitch_deg": trace_scalar("success_roll_pitch_deg"),
+        "success_yaw_deg": trace_scalar("success_yaw_deg"),
+        "goal_error": trace_scalar("xy_error"),
+        "xy_error": trace_scalar("xy_error"),
         "hprog": float(lift[idx].detach().cpu()),
         "left_arm_action_magnitude": left_arm_action_mag,
         "right_arm_action_magnitude": right_arm_action_mag,
@@ -1859,19 +1977,19 @@ def collect_openarm_re_trace_signals(env, ctx: dict, env_index: int = 0) -> dict
         "right_action_grip": right_grip_action,
         "height_ok": bool(height_ok),
         "tilt_ok": bool(tilt_ok),
-        "left_grasp_ok": bool(log_scalar("left_grasp_hint") > 0.0),
-        "right_grasp_ok": bool(log_scalar("right_grasp_hint") > 0.0),
+        "left_grasp_ok": bool(trace_scalar("left_grasp_hint") > 0.0),
+        "right_grasp_ok": bool(trace_scalar("right_grasp_hint") > 0.0),
         "dual_grasp_ok": bool(dual_grasp_ok),
         "hold_ok": bool(hold_ok),
         "strict_success": bool(strict_success),
-        "drop": bool(log_scalar("termination_drop_ratio") > 0.0),
-        "far": bool(log_scalar("termination_far_ratio") > 0.0),
-        "tilt_fail": bool(log_scalar("termination_tilt_fail_ratio") > 0.0),
-        "invalid": bool(log_scalar("termination_invalid_ratio") > 0.0),
-        "secure_bi_min": log_scalar("dual_lift_gate"),
-        "secure_bi_sqrt": log_scalar("dual_lift_gate"),
-        "grasp_imbalance": abs(log_scalar("left_grasp_hint") - log_scalar("right_grasp_hint")),
-        "reward_gap": abs(log_scalar("left_reward") - log_scalar("right_reward")),
+        "drop": bool(trace_scalar("termination_drop") > 0.0),
+        "far": bool(trace_scalar("termination_far") > 0.0),
+        "tilt_fail": bool(trace_scalar("termination_tilt_fail") > 0.0),
+        "invalid": bool(trace_scalar("termination_invalid") > 0.0),
+        "secure_bi_min": trace_scalar("dual_lift_gate"),
+        "secure_bi_sqrt": trace_scalar("dual_lift_gate"),
+        "grasp_imbalance": abs(trace_scalar("left_grasp_hint") - trace_scalar("right_grasp_hint")),
+        "reward_gap": abs(trace_scalar("left_reward") - trace_scalar("right_reward")),
         "left_right_closure_gap": abs(left_closure - right_closure),
         "left_right_contact_gap": 0.0,
     }
@@ -1887,6 +2005,9 @@ def reset_openarm_re_context(env, ctx: dict, env_ids: torch.Tensor) -> None:
     ctx["initial_object_quat_w"][env_ids] = env.object.data.root_quat_w[env_ids]
     ctx["target_object_xy_w"][env_ids] = env.object.data.root_pos_w[env_ids, 0:2]
     ctx["success_hold_count"][env_ids] = 0
+    for value in ctx.get("trace_signals", {}).values():
+        if isinstance(value, torch.Tensor) and value.ndim > 0 and value.shape[0] == env.num_envs:
+            value[env_ids] = 0
     ctx["apriltag_measurement_history"] = []
     ctx["actor_target_cache_step"] = -1
     ctx["actor_target_cache"] = None

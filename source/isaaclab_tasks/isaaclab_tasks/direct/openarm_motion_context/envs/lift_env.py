@@ -1,7 +1,7 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""OpenArmRE: a simple contact-free bimanual KLT lift DirectMARL baseline."""
+"""OpenArm contact-free bimanual KLT lift DirectMARL task."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from isaaclab.envs import DirectMARLEnv, DirectMARLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
-from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_from_euler_xyz, quat_mul
 
@@ -31,12 +30,12 @@ from .lift_task_logic import (
     ensure_openarm_re_context,
     reset_openarm_re_context,
 )
-from .robot_cfg import OPENARM_ASSET_DIR, OPEN_ARM_HIGH_PD_CFG
+from .robot_cfg import OPENARM_ENVIRONMENT_ASSET_DIR, OPEN_ARM_HIGH_PD_CFG
 
 
 @configclass
 class OpenArmReBimanualLiftSceneCfg(InteractiveSceneCfg):
-    """Scene without contact sensors for the OpenArmRE simple baseline."""
+    """Scene without contact sensors for the OpenArm lift task."""
 
     replicate_physics = True
 
@@ -45,7 +44,9 @@ class OpenArmReBimanualLiftSceneCfg(InteractiveSceneCfg):
 
     environment = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Scene",
-        spawn=UsdFileCfg(usd_path=os.path.join(OPENARM_ASSET_DIR, "openarm_env_box.usd")),
+        spawn=UsdFileCfg(
+            usd_path=os.path.join(OPENARM_ENVIRONMENT_ASSET_DIR, "lift", "openarm_env_box.usd")
+        ),
     )
 
     object = RigidObjectCfg(
@@ -75,9 +76,6 @@ class OpenArmReBimanualLiftEnvCfg(DirectMARLEnvCfg):
     #   full_partner_observation -> own_obs 30D + partner own_obs 30D
     communication_mode = "motion_context"
     communication_feature_dim = 30
-    # Backward-compatible Hydra aliases used by the shared train/play scripts.
-    intent_variant = "share_intent"
-    intent_arch = "shared_intent_encoder"
     sharing_mode = "motion_context_share"
     intent_horizon = 1
     intent_stride = 1
@@ -102,19 +100,13 @@ class OpenArmReBimanualLiftEnvCfg(DirectMARLEnvCfg):
     use_gripper_proprio_obs = True
     own_observation_dim = 30
     actor_input_dim = 60
-    intent_task_label = "openarm_re_simple_reward"
+    intent_task_label = "openarm_lift"
     observation_spaces = {"left_arm": 60, "right_arm": 60}
     state_space = 73
 
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 120,
         render_interval=decimation,
-        physics_material=RigidBodyMaterialCfg(
-            static_friction=8.0,
-            dynamic_friction=6.0,
-            restitution=0.0,
-            friction_combine_mode="max",
-        ),
         physx=PhysxCfg(
             bounce_threshold_velocity=0.2,
             enable_ccd=True,
@@ -174,29 +166,27 @@ class OpenArmReBimanualLiftEnvCfg(DirectMARLEnvCfg):
     collision_target_x_rot_offset_deg = 180.0
 
     # Reward.
-    reward_reach_scale = 2.5
-    reward_orientation_scale = 2.0
-    reward_grasp_scale = 10.0
-    reward_lift_scale = 48.0
-    lift_target_height = 0.15
-    reward_goal_scale = 5.0
-    reward_stability_scale = 10.0
+    reward_reach_scale = 2.0
+    reward_grasp_scale = 5.0
+    reward_lift_scale = 20.0
+    lift_target_height = 0.10
+    # One-shot reward on the step that completes the success hold. With
+    # gamma=0.99, 3000 is slightly above the maximum discounted continuation
+    # value of the 27-point dense reward and removes the incentive to hover.
+    reward_success_scale = 3000.0
 
     # Tilt is folded into lift reward as lift * (1 - normalized_tilt_penalty)^2.
     tilt_free_deg = 5.0
     tilt_bad_deg = 20.0
     reward_action_rate_scale = 1.0e-3
-    reward_joint_vel_scale = 3.0e-4
 
     #std parameters
     reach_std = 0.25
     orientation_std = 0.8
-    goal_std = 0.35
     # Termination / success.
-    success_height_margin = 0.08
-    success_roll_pitch_threshold = 10.0
-    success_yaw_threshold = 10.0
-    hold_required_steps = 90
+    success_height_margin = 0.10
+    success_tilt_threshold_deg = 10.0
+    hold_required_steps = 60
     fall_height_margin = 0.10
     max_target_distance = 1.0
     max_tilt_deg = 30.0
@@ -216,17 +206,8 @@ class OpenArmReBimanualLiftEnvCfg(DirectMARLEnvCfg):
             "previous_action",
             "full_partner_observation",
         }
-        if self.intent_variant not in ("no_intent", "share_intent"):
-            raise ValueError(
-                "OpenArmRE supports intent_variant='no_intent' or 'share_intent' as a CLI alias. "
-                f"Got {self.intent_variant!r}."
-            )
-        if self.intent_variant == "no_intent":
-            self.communication_mode = "none"
         if self.communication_mode not in valid_modes:
             raise ValueError(f"Unsupported communication_mode={self.communication_mode!r}. Valid modes: {sorted(valid_modes)}")
-        self.intent_variant = "no_intent" if self.communication_mode == "none" else "share_intent"
-        self.intent_arch = "none" if self.communication_mode == "none" else "shared_intent_encoder"
         if int(self.motion_intent_dim) != 3 or int(self.motion_context_dim) != 3:
             raise ValueError("OpenArmRE paper communication requires motion 3D + context 3D.")
 
@@ -258,8 +239,6 @@ class OpenArmReBimanualLiftEnv(DirectMARLEnv):
         self.robot = self.scene.articulations["robot"]
         self.object = self.scene.rigid_objects["object"]
 
-        self.intent_variant = str(self.cfg.intent_variant)
-        self.intent_arch = str(self.cfg.intent_arch)
         self.communication_mode = str(self.cfg.communication_mode)
         self.sharing_mode = str(self.cfg.sharing_mode)
         self.intent_horizon = int(self.cfg.intent_horizon)
@@ -336,7 +315,6 @@ class OpenArmReBimanualLiftEnv(DirectMARLEnv):
         self._smoothed_action = torch.zeros((self.num_envs, 16), device=self.device)
 
         self.communication_enabled = True
-        self.intent_share_enabled = True
         self.communication_buffer: dict[str, torch.Tensor] = {
             "left_intent": torch.zeros(
                 (self.num_envs, self.intent_horizon, self.communication_feature_dim),
@@ -355,7 +333,7 @@ class OpenArmReBimanualLiftEnv(DirectMARLEnv):
         self.object_authored_local_pos = (self.object.data.root_pos_w[0, 0:3] - env_origin0).clone()
         self.object_authored_local_rot = self.object.data.root_quat_w[0].clone()
 
-        print("[INFO] OpenArmRE paper motion-context task initialized")
+        print("[INFO] OpenArm Lift motion-context task initialized")
         print(f"[INFO] communication_mode={self.communication_mode}")
         print(f"[INFO] communication_sharing={self.sharing_mode}")
         print(f"[INFO] own_observation_dim={self.own_observation_dim}")
@@ -363,7 +341,7 @@ class OpenArmReBimanualLiftEnv(DirectMARLEnv):
         print(f"[INFO] actor_input_dim={self.actor_input_dim}")
         print("[INFO] 6D motion-context message = base-frame signed EE motion 3D + proprioceptive context 3D")
         print("[INFO] motion context = linear_activity, angular_activity, action_smoothness")
-        print("[INFO] reward=reach + orientation + grasp_hint + dual-gated tilt-aware_lift + center - action_rate - joint_vel")
+        print("[INFO] reward=reach + cooperative_grasp + stable_lift + terminal_success - action_rate")
         print("[INFO] contact/force/learned-mode/auxiliary-intent rewards are not used")
 
     def set_pending_intents(
@@ -629,7 +607,7 @@ class OpenArmReBimanualLiftEnv(DirectMARLEnv):
 class OpenArmReIncrementalBimanualLiftEnvCfg(OpenArmReBimanualLiftEnvCfg):
     """Config using accumulated joint-position targets instead of default-pose offsets."""
 
-    intent_task_label = "openarm_re_simple_reward_incremental"
+    intent_task_label = "openarm_lift"
     action_scale = 0.7
     action_step_scale = 0.04
 

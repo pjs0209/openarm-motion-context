@@ -189,8 +189,7 @@ def _make_policy(agent: str, cfg: dict[str, Any], checkpoint: Any, *, device: to
         own_observation_dim=int(policy_cfg.get("own_observation_dim", 30)),
         motion_intent_dim=int(policy_cfg.get("motion_intent_dim", 3)),
         motion_context_dim=int(policy_cfg.get("motion_context_dim", 3)),
-        intent_variant="share_intent",
-        intent_arch="shared_intent_encoder",
+        communication_mode=str(cfg.get("communication", {}).get("mode", "motion_context")),
         agent_id=agent,
         clip_actions=True,
         initial_log_std=0.0,
@@ -220,11 +219,11 @@ class OpenArmPaperReLiftDeployNode:
         self.cfg = cfg
         self.device = torch.device(str(cfg.get("policy", {}).get("device", "cpu")))
 
-        self.node = rclpy.create_node("openarm_paper_re_lift_deploy")
+        self.node = rclpy.create_node("openarm_lift_deploy")
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self.base_frame = str(cfg.get("base_frame", "openarm_body_link0"))
-        self.rate_hz = float(cfg.get("control_rate_hz", 30.0))
+        self.rate_hz = float(cfg.get("control_rate_hz", 60.0))
         self.dt = 1.0 / max(self.rate_hz, 1.0e-6)
         self.dry_run = bool(cfg.get("dry_run", True))
         self.context_scale = _maybe_load_motion_context_scale(cfg, device=self.device)
@@ -345,7 +344,7 @@ class OpenArmPaperReLiftDeployNode:
 
         self.timer = self.node.create_timer(self.dt, self._control_tick)
         self.node.get_logger().info(
-            "OpenArm Paper Re-Lift deploy node ready "
+            "OpenArm Lift deploy node ready "
             f"(dry_run={self.dry_run}, cameras={self.camera_names}, tags={self.tag_ids})"
         )
 

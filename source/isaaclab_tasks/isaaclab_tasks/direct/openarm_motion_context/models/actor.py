@@ -68,8 +68,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         own_observation_dim: int,
         motion_intent_dim: int,
         motion_context_dim: int,
-        intent_variant: str = "share_intent",
-        intent_arch: str = "shared_intent_encoder",
+        communication_mode: str = "motion_context",
         agent_id: str = "",
         clip_actions: bool = False,
         clip_log_std: bool = True,
@@ -83,15 +82,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         Model.__init__(self, observation_space, action_space, device)
         GaussianMixin.__init__(self, clip_actions, clip_log_std, min_log_std, max_log_std, reduction)
 
-        if intent_variant not in ("no_intent", "share_intent"):
-            raise ValueError(f"Unsupported paper intent_variant: {intent_variant}")
-        if intent_variant == "share_intent" and intent_arch != "shared_intent_encoder":
-            raise ValueError(
-                "share_intent only supports intent_arch='shared_intent_encoder', "
-                f"got {intent_arch!r}"
-            )
-        self.intent_variant = intent_variant
-        self.intent_arch = "none" if intent_variant == "no_intent" else "shared_intent_encoder"
+        self.communication_mode = str(communication_mode)
         self.agent_id = str(agent_id)
         self.own_observation_dim = int(own_observation_dim)
         self.motion_intent_dim = int(motion_intent_dim)
@@ -99,9 +90,9 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         default_message_dim = self.motion_intent_dim + self.motion_context_dim
         self.communication_feature_dim = int(communication_feature_dim if communication_feature_dim is not None else default_message_dim)
         self.intent_feature_dim = self.communication_feature_dim
-        # Every ablation keeps the same fixed-width actor slot. ``no_intent``
-        # must nevertheless bypass the partner encoder entirely.
-        self.uses_context = self.intent_variant == "share_intent" and self.communication_feature_dim > 0
+        # Every ablation keeps the same fixed-width actor slot. ``none``
+        # nevertheless bypasses the partner encoder entirely.
+        self.uses_context = self.communication_mode != "none" and self.communication_feature_dim > 0
         self.partner_intent_embed_dim = max(int(partner_intent_embed_dim), 1)
 
         # actor branch는 agent-specific이다. partner message, contact sensor,
@@ -267,7 +258,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
             "partner_intent_norm": actor_partner_intent.detach().norm(dim=-1).mean(),
             "partner_intent_feat_norm": partner_intent_feat.detach().norm(dim=-1).mean(),
             "partner_motion_context_mean": motion_context.detach().mean(dim=0),
-            "intent_variant": self.intent_variant,
+            "communication_mode": self.communication_mode,
         }
         return mean_actions, self.log_std_parameter, outputs
 
@@ -839,30 +830,7 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     state_spaces = task_env.state_spaces
     possible_agents = task_env.possible_agents
     hidden_sizes = cfg["models"]["policy"]["network"][0]["layers"]
-    intent_variant = str(
-        getattr(task_env, "intent_variant", cfg.get("agent", {}).get("intent_variant", cfg["models"]["policy"].get("intent_variant", "share_intent")))
-    )
-    if intent_variant not in ("no_intent", "share_intent"):
-        raise ValueError(
-            "Paper intent agent only supports intent_variant='no_intent' or 'share_intent'. "
-            f"Got {intent_variant!r}."
-        )
-    intent_arch = str(
-        getattr(
-            task_env,
-            "intent_arch",
-            cfg["models"]["policy"].get("intent_arch", cfg.get("agent", {}).get("intent_arch", "shared_intent_encoder")),
-        )
-    )
-    if intent_variant == "no_intent":
-        intent_arch = "none"
-    elif intent_arch != "shared_intent_encoder":
-        raise ValueError(
-            "share_intent only supports intent_arch='shared_intent_encoder'. "
-            f"Got {intent_arch!r}."
-        )
-
-    communication_mode = str(getattr(task_env, "communication_mode", "motion_context" if intent_variant == "share_intent" else "none"))
+    communication_mode = str(getattr(task_env, "communication_mode", "motion_context"))
     intent_horizon = int(getattr(task_env, "intent_horizon", 1))
     if intent_horizon != 1:
         raise RuntimeError("Paper motion-context intent expects intent_horizon=1.")
@@ -881,16 +849,15 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     )
     expected_actor_dim = own_observation_dim + intent_feature_dim
     actor_action_input_dim = hidden_sizes[-1]
-    if intent_variant == "share_intent" and communication_feature_dim > 0:
+    if communication_mode != "none" and communication_feature_dim > 0:
         actor_action_input_dim += partner_intent_embed_dim
     gripper_head_input_dim = actor_action_input_dim + 7
     for agent_id in possible_agents:
         obs_dim = observation_spaces[agent_id].shape[0] if hasattr(observation_spaces[agent_id], "shape") else int(observation_spaces[agent_id])
         if obs_dim != expected_actor_dim:
-            raise RuntimeError(f"{intent_variant} actor observation dim must be {expected_actor_dim}, got {obs_dim}")
+            raise RuntimeError(f"{communication_mode} actor observation dim must be {expected_actor_dim}, got {obs_dim}")
 
-    print(f"[INFO] Paper communication_mode={communication_mode}")
-    print(f"[INFO] compatibility intent_variant={intent_variant}")
+    print(f"[INFO] communication_mode={communication_mode}")
     print(f"[INFO] own_obs_dim={own_observation_dim}")
     print(f"[INFO] communication_feature_dim={communication_feature_dim}")
     print(f"[INFO] motion_dim={motion_intent_dim}")
@@ -918,8 +885,7 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
                 own_observation_dim=own_observation_dim,
                 motion_intent_dim=motion_intent_dim,
                 motion_context_dim=motion_context_dim,
-                intent_variant=intent_variant,
-                intent_arch="shared_intent_encoder",
+                communication_mode=communication_mode,
                 agent_id=agent_id,
                 partner_intent_embed_dim=partner_intent_embed_dim,
                 communication_feature_dim=communication_feature_dim,
@@ -944,8 +910,6 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
         )
 
     agent_cfg = copy.deepcopy(cfg["agent"])
-    agent_cfg["intent_variant"] = intent_variant
-    agent_cfg["intent_arch"] = intent_arch
     agent_cfg["learning_rate_scheduler"] = _resolve_component(agent_cfg.get("learning_rate_scheduler"))
     agent_cfg["state_preprocessor"] = _resolve_component(agent_cfg.get("state_preprocessor"))
     agent_cfg["shared_state_preprocessor"] = _resolve_component(agent_cfg.get("shared_state_preprocessor"))

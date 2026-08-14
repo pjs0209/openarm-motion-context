@@ -1,6 +1,6 @@
 # OpenArm Motion Context
 
-This package contains the paper implementation of Proprioceptive Motion
+This package contains the Isaac Lab implementation of Proprioceptive Motion
 Context Sharing for OpenArm bimanual manipulation.
 
 - `envs`: Isaac Lab task definitions and reward/state logic.
@@ -13,6 +13,5 @@ Context Sharing for OpenArm bimanual manipulation.
 - `common`: shared transform, observation, and action contracts.
 - `scripts`: short command wrappers for training, evaluation, and deployment.
 
-The Gym task IDs remain `Isaac-OpenArm-Re-Lift-Paper-v0` and
-`Isaac-OpenArm-PegInHole-Fixed-Paper-v0` for checkpoint and command
-compatibility.
+The Gym task IDs are `Isaac-OpenArm-Lift-v0` and
+`Isaac-OpenArm-PegInHole-v0`.

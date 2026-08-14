@@ -1,7 +1,7 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Export deploy calibration from the Paper Re-Lift USD/task geometry.
+"""Export deploy calibration from the OpenArm Lift USD/task geometry.
 
 The export intentionally uses the same task-logic path as training:
 
@@ -22,7 +22,7 @@ from isaaclab.app import AppLauncher
 
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--task", type=str, default="Isaac-OpenArm-Re-Lift-Paper-v0", help="Paper lift task name")
+parser.add_argument("--task", type=str, default="Isaac-OpenArm-Lift-v0", help="OpenArm lift task name")
 parser.add_argument(
     "--template",
     type=str,

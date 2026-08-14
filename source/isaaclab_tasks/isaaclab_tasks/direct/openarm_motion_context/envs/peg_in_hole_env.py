@@ -1,7 +1,7 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""OpenArm bimanual peg-in-hole DirectMARL task with Paper motion-context intent interface."""
+"""OpenArm bimanual peg-in-hole DirectMARL task with motion-context sharing."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from isaaclab.envs import DirectMARLEnv, DirectMARLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
-from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_apply, quat_inv, quat_mul
 
@@ -32,7 +31,7 @@ from .peg_in_hole_task_logic import (
     ensure_openarm_re_context,
     reset_openarm_re_context,
 )
-from .robot_cfg import OPENARM_ASSET_DIR, OPEN_ARM_HIGH_PD_CFG
+from .robot_cfg import OPENARM_ENVIRONMENT_ASSET_DIR, OPEN_ARM_HIGH_PD_CFG
 
 
 @configclass
@@ -46,7 +45,11 @@ class OpenArmPegInHoleSceneCfg(InteractiveSceneCfg):
 
     environment = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Scene",
-        spawn=UsdFileCfg(usd_path=os.path.join(OPENARM_ASSET_DIR, "openarm_env_peg_in_hole.usd")),
+        spawn=UsdFileCfg(
+            usd_path=os.path.join(
+                OPENARM_ENVIRONMENT_ASSET_DIR, "peg_in_hole", "openarm_env_peg_in_hole.usd"
+            )
+        ),
     )
 
     peg = RigidObjectCfg(
@@ -83,9 +86,6 @@ class OpenArmPegInHoleEnvCfg(DirectMARLEnvCfg):
     #   full_partner_observation -> own_obs 30D + partner own_obs 30D
     communication_mode = "motion_context"
     communication_feature_dim = 30
-    # Backward-compatible Hydra aliases used by the shared train/play scripts.
-    intent_variant = "share_intent"
-    intent_arch = "shared_intent_encoder"
     sharing_mode = "motion_context_share"
     intent_horizon = 1
     intent_stride = 1
@@ -117,12 +117,6 @@ class OpenArmPegInHoleEnvCfg(DirectMARLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 120,
         render_interval=decimation,
-        physics_material=RigidBodyMaterialCfg(
-            static_friction=8.0,
-            dynamic_friction=6.0,
-            restitution=0.0,
-            friction_combine_mode="max",
-        ),
         physx=PhysxCfg(
             bounce_threshold_velocity=0.2,
             enable_ccd=True,
@@ -197,17 +191,8 @@ class OpenArmPegInHoleEnvCfg(DirectMARLEnvCfg):
             "previous_action",
             "full_partner_observation",
         }
-        if self.intent_variant not in ("no_intent", "share_intent"):
-            raise ValueError(
-                "OpenArmPegInHole supports intent_variant='no_intent' or 'share_intent' as a CLI alias. "
-                f"Got {self.intent_variant!r}."
-            )
-        if self.intent_variant == "no_intent":
-            self.communication_mode = "none"
         if self.communication_mode not in valid_modes:
             raise ValueError(f"Unsupported communication_mode={self.communication_mode!r}. Valid modes: {sorted(valid_modes)}")
-        self.intent_variant = "no_intent" if self.communication_mode == "none" else "share_intent"
-        self.intent_arch = "none" if self.communication_mode == "none" else "shared_intent_encoder"
         if int(self.motion_intent_dim) != 3 or int(self.motion_context_dim) != 3:
             raise ValueError("OpenArmPegInHole paper communication requires motion 3D + context 3D.")
 
@@ -242,8 +227,6 @@ class OpenArmPegInHoleEnv(DirectMARLEnv):
         # Backward-compatible alias for shared Paper motion-context helper code.
         self.object = self.peg
 
-        self.intent_variant = str(self.cfg.intent_variant)
-        self.intent_arch = str(self.cfg.intent_arch)
         self.communication_mode = str(self.cfg.communication_mode)
         self.sharing_mode = str(self.cfg.sharing_mode)
         self.intent_horizon = int(self.cfg.intent_horizon)
@@ -320,7 +303,6 @@ class OpenArmPegInHoleEnv(DirectMARLEnv):
         self._right_arm_incremental_target = self.robot.data.joint_pos[:, self.right_arm_joint_ids].clone()
 
         self.communication_enabled = True
-        self.intent_share_enabled = True
         self.communication_buffer: dict[str, torch.Tensor] = {
             "left_intent": torch.zeros(
                 (self.num_envs, self.intent_horizon, self.communication_feature_dim),
@@ -341,7 +323,7 @@ class OpenArmPegInHoleEnv(DirectMARLEnv):
         self.hole_authored_local_pos = (self.hole.data.root_pos_w[0, 0:3] - env_origin0).clone()
         self.hole_authored_local_rot = self.hole.data.root_quat_w[0].clone()
 
-        print("[INFO] OpenArm peg-in-hole Paper motion-context task initialized")
+        print("[INFO] OpenArm PegInHole motion-context task initialized")
         print(f"[INFO] communication_mode={self.communication_mode}")
         print(f"[INFO] communication_sharing={self.sharing_mode}")
         print(f"[INFO] own_observation_dim={self.own_observation_dim}")
@@ -648,7 +630,7 @@ class OpenArmFixedPegAndHoleEnvCfg(OpenArmPegInHoleEnvCfg):
     fixed_peg_gripper_open_target = 0.004
     fixed_hole_gripper_open_target = 0.010
     use_runtime_fixed_joints = True
-    intent_task_label = "openarm_peg_in_hole_fixed_gripper_objects"
+    intent_task_label = "openarm_peg_in_hole"
 
 
 class OpenArmFixedPegAndHoleEnv(OpenArmPegInHoleEnv):

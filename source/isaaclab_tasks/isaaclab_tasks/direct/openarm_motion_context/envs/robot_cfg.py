@@ -16,37 +16,90 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
 
-def _resolve_openarm_asset_dir() -> str:
-    """Resolve assets from an override or the standard workspace layout."""
+def _resolve_openarm_asset_dirs() -> tuple[str, str, str, str]:
+    """Resolve separate robot, environment, object, and sensor asset directories."""
 
-    configured = os.environ.get("OPENARM_ASSET_DIR")
-    candidates = []
-    if configured:
-        candidates.append(Path(configured).expanduser())
+    legacy = os.environ.get("OPENARM_ASSET_DIR")
+    robot_override = os.environ.get("OPENARM_ROBOT_ASSET_DIR")
+    environment_override = os.environ.get("OPENARM_ENVIRONMENT_ASSET_DIR")
+    object_override = os.environ.get("OPENARM_OBJECT_ASSET_DIR")
+    sensor_override = os.environ.get("OPENARM_SENSOR_ASSET_DIR")
 
-    source_path = Path(__file__).resolve()
-    isaaclab_root = next((parent for parent in source_path.parents if parent.name == "IsaacLab"), None)
-    if isaaclab_root is not None:
-        candidates.append(isaaclab_root.parent / "assets" / "openarm")
+    from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
 
-    required = (
-        "openarm_robot_with_camera_fixed.usda",
-        "openarm_env_box.usd",
-        "openarm_env_peg_in_hole.usd",
+    data_dir = Path(ISAACLAB_ASSETS_DATA_DIR)
+    packaged_dirs = {
+        "robot": data_dir / "Robots" / "OpenArm",
+        "environment": data_dir / "Environments" / "OpenArm",
+        "object": data_dir / "Objects" / "OpenArm",
+        "sensor": data_dir / "Sensors" / "OpenArm",
+    }
+    overrides = {
+        "robot": robot_override,
+        "environment": environment_override,
+        "object": object_override,
+        "sensor": sensor_override,
+    }
+
+    # OPENARM_ASSET_DIR is a deprecated compatibility option. It is accepted
+    # only when it already follows the new category layout; a stale flat asset
+    # directory must not shadow the packaged assets bundled with this task.
+    legacy_root = Path(legacy).expanduser() if legacy else None
+    legacy_dirs = {
+        "robot": legacy_root / "Robots" / "OpenArm" if legacy_root else None,
+        "environment": legacy_root / "Environments" / "OpenArm" if legacy_root else None,
+        "object": legacy_root / "Objects" / "OpenArm" if legacy_root else None,
+        "sensor": legacy_root / "Sensors" / "OpenArm" if legacy_root else None,
+    }
+
+    resolved_dirs: dict[str, Path] = {}
+    for kind, packaged_dir in packaged_dirs.items():
+        override = overrides[kind]
+        if override:
+            resolved_dirs[kind] = Path(override).expanduser()
+        elif packaged_dir.is_dir():
+            resolved_dirs[kind] = packaged_dir
+        elif legacy_dirs[kind] is not None and legacy_dirs[kind].is_dir():
+            resolved_dirs[kind] = legacy_dirs[kind]
+        else:
+            resolved_dirs[kind] = packaged_dir
+
+    robot_dir = resolved_dirs["robot"]
+    environment_dir = resolved_dirs["environment"]
+    object_dir = resolved_dirs["object"]
+    sensor_dir = resolved_dirs["sensor"]
+
+    required = {
+        "robot": (robot_dir, ("openarm_robot_with_camera.usda",)),
+        "environment": (
+            environment_dir,
+            ("lift/openarm_env_box.usd", "peg_in_hole/openarm_env_peg_in_hole.usd"),
+        ),
+        "object": (object_dir, ("peg_in_hole/peg_usd.usdc", "peg_in_hole/hole_usd.usdc")),
+        "sensor": (sensor_dir, ("cameras/realsense_d435i.usd",)),
+    }
+    missing = [
+        f"{kind}: {directory / filename}"
+        for kind, (directory, filenames) in required.items()
+        for filename in filenames
+        if not (directory / filename).is_file()
+    ]
+    if missing:
+        raise RuntimeError("Missing OpenArm assets:\n  " + "\n  ".join(missing))
+    return (
+        str(robot_dir.resolve()),
+        str(environment_dir.resolve()),
+        str(object_dir.resolve()),
+        str(sensor_dir.resolve()),
     )
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if all((resolved / filename).is_file() for filename in required):
-            return str(resolved)
-
-    checked = ", ".join(str(candidate) for candidate in candidates) or "no paths"
-    raise RuntimeError(
-        "Unable to locate OpenArm USD assets. Set OPENARM_ASSET_DIR to the directory containing "
-        f"{', '.join(required)}. Checked: {checked}."
-    )
 
 
-OPENARM_ASSET_DIR = _resolve_openarm_asset_dir()
+(
+    OPENARM_ROBOT_ASSET_DIR,
+    OPENARM_ENVIRONMENT_ASSET_DIR,
+    OPENARM_OBJECT_ASSET_DIR,
+    OPENARM_SENSOR_ASSET_DIR,
+) = _resolve_openarm_asset_dirs()
 
 
 _START_POSE_DEG = {
@@ -80,7 +133,7 @@ OPEN_ARM_CFG = ArticulationCfg(
     # USD asset이 link/joint name의 source of truth다. task logic은 이 이름으로
     # left/right arm과 finger state를 slicing한다.
     spawn=sim_utils.UsdFileCfg(
-        usd_path=os.path.join(OPENARM_ASSET_DIR, "openarm_robot_with_camera_fixed.usda"),
+        usd_path=os.path.join(OPENARM_ROBOT_ASSET_DIR, "openarm_robot_with_camera.usda"),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             max_depenetration_velocity=5.0,

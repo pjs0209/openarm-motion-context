@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone launcher for the reorganized motion-context analysis."""
+"""Standalone launcher for OpenArm motion-context trace analysis."""
 
 from pathlib import Path
 import runpy
@@ -12,7 +12,7 @@ _ANALYZER = (
 
 
 def main() -> None:
-    """Run the pure log analyzer without importing Isaac Sim task packages."""
+    """Run the pure JSON analyzer without importing Isaac Sim task packages."""
 
     namespace = runpy.run_path(str(_ANALYZER))
     namespace["main"]()

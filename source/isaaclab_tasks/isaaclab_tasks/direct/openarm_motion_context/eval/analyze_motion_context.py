@@ -32,7 +32,7 @@ METHOD_ORDER = (
     "full_partner_observation",
 )
 METHOD_LABELS = {
-    "none": "None",
+    "none": "No Communication",
     "motion_only": "Motion Only",
     "context_only": "Context Only",
     "motion_context": "Motion Context",
@@ -50,12 +50,12 @@ MESSAGE_DIMS = {
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Create paper-ready tables and figures from paper motion-context traces.")
+    parser = argparse.ArgumentParser(description="Create paper-ready tables and figures from OpenArm motion-context traces.")
     parser.add_argument("--trace_dir", type=str, required=True, help="Trace directory or experiment root.")
     parser.add_argument(
         "--out_dir",
         type=str,
-        default="logs/paper_motion_context_analysis",
+        default="logs/motion_context_analysis",
         help="Base output directory. The trace directory name is appended automatically.",
     )
     parser.add_argument("--episode", type=int, default=None, help="Episode index to plot. Defaults to the first trace.")
@@ -78,7 +78,10 @@ def load_trace(path: Path) -> dict:
 
 
 def load_traces(trace_dir: Path, episode: int | None) -> list[dict]:
-    files = sorted(trace_dir.rglob("mode_trace_episode_*.json"))
+    files = sorted(
+        set(trace_dir.rglob("motion_context_trace_episode_*.json"))
+        | set(trace_dir.rglob("mode_trace_episode_*.json"))
+    )
     if not files:
         raise FileNotFoundError(f"No trace files found under: {trace_dir}")
     traces = [load_trace(path) for path in files]
@@ -87,6 +90,41 @@ def load_traces(trace_dir: Path, episode: int | None) -> list[dict]:
         if not traces:
             raise FileNotFoundError(f"No trace with episode_index={episode} under: {trace_dir}")
     return traces
+
+
+def validate_trace(trace: dict) -> list[str]:
+    """Return schema problems that would make paper metrics misleading."""
+
+    issues: list[str] = []
+    length = recorded_len(trace)
+    meta = metadata(trace)
+    method = infer_method(trace, None)
+    if length <= 0:
+        issues.append("empty episode")
+    for key in ("reward_mean", "left_motion_context", "right_motion_context"):
+        size = len(trace.get(key, []))
+        if size not in (0, length):
+            issues.append(f"{key} has {size} samples, expected {length}")
+    schema = str(meta.get("trace_schema", ""))
+    if schema and schema not in ("openarm_motion_context/v1", "openarm_motion_context/v2"):
+        issues.append(f"unsupported trace schema {schema!r}")
+    payload_dim = int(meta.get("communication_payload_dim", MESSAGE_DIMS.get(method, 6)) or 0)
+    expected_dim = int(MESSAGE_DIMS.get(method, payload_dim))
+    if payload_dim != expected_dim:
+        issues.append(f"payload dim {payload_dim} does not match {method} ({expected_dim})")
+    for side in ("left", "right"):
+        raw = np.asarray(trace.get(f"{side}_message", []), dtype=float)
+        if raw.size and (raw.ndim != 2 or raw.shape[0] != length or raw.shape[1] < payload_dim):
+            issues.append(f"{side}_message shape {raw.shape} is incompatible with length={length}, payload={payload_dim}")
+    required_task_fields = (
+        ("tip_dist", "lateral_error", "axis_alignment", "insertion_depth")
+        if infer_task(trace, None) == "Peg"
+        else ("object_z", "object_dz", "object_tilt_deg", "hprog")
+    )
+    for key in required_task_fields:
+        if len(trace.get(key, [])) != length:
+            issues.append(f"missing or incomplete task field {key}")
+    return issues
 
 
 def resolve_output_dir(trace_dir: Path, out_dir: Path) -> Path:
@@ -99,7 +137,9 @@ def metadata(trace: dict) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def episode_len(trace: dict) -> int:
+def recorded_len(trace: dict) -> int:
+    """Return the number of rows physically stored in a trace."""
+
     candidates = [
         len(trace.get("reward_mean", [])),
         len(trace.get("left_motion_context", [])),
@@ -108,8 +148,15 @@ def episode_len(trace: dict) -> int:
         int(trace.get("episode_length", 0) or 0),
         int(trace.get("num_steps", 0) or 0),
     ]
-    length = max(candidates)
-    return trim_reset_tail_length(trace, length)
+    return max(candidates)
+
+
+def episode_len(trace: dict) -> int:
+    """Return rows used for analysis, trimming only legacy auto-reset tails."""
+
+    length = recorded_len(trace)
+    schema = str(metadata(trace).get("trace_schema", ""))
+    return trim_reset_tail_length(trace, length) if schema in ("", "openarm_motion_context/v1") else length
 
 
 def trim_reset_tail_length(trace: dict, length: int) -> int:
@@ -176,6 +223,82 @@ def context_series(trace: dict, side: str, length: int) -> np.ndarray:
     return np.stack([scalar_series(trace, f"{side}_{name}", length) for name in CONTEXT_NAMES], axis=-1)
 
 
+def payload_layout(trace: dict, method: str) -> list[str]:
+    layout = metadata(trace).get("communication_payload_layout", [])
+    if isinstance(layout, list) and layout:
+        return [str(name) for name in layout]
+    if method == "motion_only":
+        return list(MOTION_NAMES)
+    if method == "context_only":
+        return list(CONTEXT_NAMES)
+    if method == "motion_context":
+        return [*MOTION_NAMES, *CONTEXT_NAMES]
+    if method == "previous_action":
+        return [f"previous_action_{index}" for index in range(MESSAGE_DIMS[method])]
+    if method == "full_partner_observation":
+        return [f"partner_observation_{index}" for index in range(MESSAGE_DIMS[method])]
+    return []
+
+
+def payload_series(trace: dict, side: str, method: str, length: int) -> tuple[np.ndarray, list[str]]:
+    """Read the normalized partner slot seen by a policy actor."""
+
+    names = payload_layout(trace, method)
+    width = len(names)
+    if width == 0:
+        return np.zeros((length, 0), dtype=float), names
+    raw_message = np.asarray(trace.get(f"{side}_message", []), dtype=float)
+    if raw_message.ndim == 2 and raw_message.shape[0] > 0:
+        return vector_series(trace, f"{side}_message", width, length), names
+    motion = vector_series(trace, f"{side}_motion", 3, length)
+    context = context_series(trace, side, length)
+    if method == "motion_only":
+        return motion, names
+    if method == "context_only":
+        return context, names
+    if method == "motion_context":
+        return np.concatenate([motion, context], axis=-1), names
+    return np.zeros((length, 0), dtype=float), []
+
+
+def raw_payload_series(trace: dict, side: str, method: str, length: int) -> tuple[np.ndarray, list[str]]:
+    """Reconstruct the outgoing physical descriptor before policy preprocessing."""
+
+    names = payload_layout(trace, method)
+    motion = vector_series(trace, f"{side}_motion", 3, length)
+    context = context_series(trace, side, length)
+    if method == "motion_only":
+        return motion, names
+    if method == "context_only":
+        return context, names
+    if method == "motion_context":
+        return np.concatenate([motion, context], axis=-1), names
+    if method == "previous_action":
+        arm = vector_series(trace, f"{side}_arm_action", 7, length)
+        grip = scalar_series(trace, f"{side}_action_grip", length)[:, None]
+        return np.concatenate([arm, grip], axis=-1), names
+    # The complete raw 30D own observation was not stored by legacy traces.
+    return np.zeros((length, 0), dtype=float), []
+
+
+def saturation_ratio(trace: dict, method: str, feature: str, values: np.ndarray) -> float:
+    """Measure saturation against the feature's actual configured bound."""
+
+    if values.size == 0:
+        return float("nan")
+    if feature in MOTION_NAMES or feature.startswith("previous_action_"):
+        bound = 1.0
+    elif feature in ("linear_activity", "angular_activity"):
+        bound = float(metadata(trace).get("context_norm_max", 1.5) or 1.5)
+    elif feature == "action_smoothness":
+        bound = 1.0
+    elif method == "full_partner_observation":
+        return float("nan")
+    else:
+        return float("nan")
+    return safe_mean(np.abs(values) >= 0.99 * max(bound, 1.0e-6))
+
+
 def smooth(values: np.ndarray, window: int) -> np.ndarray:
     if window <= 1 or values.shape[0] < window:
         return values
@@ -200,6 +323,22 @@ def safe_std(values) -> float:
 def first_step(mask: np.ndarray) -> float:
     idx = np.flatnonzero(mask)
     return float(idx[0]) if idx.size else float("nan")
+
+
+def first_post_reset_event(mask: np.ndarray) -> float:
+    """Return the first event after discarding a stale true run at reset."""
+
+    values = np.asarray(mask, dtype=bool)
+    if not values.size:
+        return float("nan")
+    start = 0
+    if values[0]:
+        false_idx = np.flatnonzero(~values)
+        if not false_idx.size:
+            return float("nan")
+        start = int(false_idx[0]) + 1
+    event_idx = np.flatnonzero(values[start:])
+    return float(start + event_idx[0]) if event_idx.size else float("nan")
 
 
 def max_consecutive(mask: np.ndarray) -> int:
@@ -368,14 +507,22 @@ def classify_peg_failure(trace: dict, length: int, success: bool) -> str:
     lateral = scalar_series(trace, "lateral_error", length)
     axis = scalar_series(trace, "axis_alignment", length)
     depth = scalar_series(trace, "insertion_depth", length)
-    side_wall = np.any((depth > 0.0) & (lateral > 0.015))
+    meta = metadata(trace)
+    lateral_threshold = float(meta.get("success_lateral_threshold", 0.012))
+    axis_threshold = float(meta.get("success_axis_threshold", 0.85))
+    depth_threshold = float(meta.get("success_depth_threshold", 0.045))
+    wall_lateral = float(meta.get("wall_penetration_lateral_threshold", 0.015))
+    wall_depth = float(meta.get("wall_penetration_depth_threshold", 0.0))
+    side_wall = np.any((depth > wall_depth) & (lateral > wall_lateral))
     if side_wall:
         return "side_wall_penetration"
     if np.any(tip) and np.nanmin(tip) > 0.05:
         return "far_from_hole"
-    if (np.any(axis) and np.nanmax(axis) < 0.80) or (np.any(lateral) and np.nanmin(lateral) > 0.015):
+    if (np.any(axis) and np.nanmax(axis) < axis_threshold) or (
+        np.any(lateral) and np.nanmin(lateral) > lateral_threshold
+    ):
         return "alignment_fail"
-    if np.nanmax(depth) < 0.03:
+    if np.nanmax(depth) < depth_threshold:
         return "insufficient_depth"
     return "timeout"
 
@@ -420,15 +567,18 @@ def summarize_trace(trace: dict, args) -> dict[str, float | int | str]:
     peg_fail = classify_peg_failure(trace, length, success)
     failure_reason = peg_fail if task == "Peg" else lift_fail
     mean_lifted_tilt = safe_mean(tilt[hprog > 0.2]) if np.any(hprog > 0.2) else 0.0
-    lateral_threshold = 0.008
-    axis_threshold = 0.92
-    depth_threshold = float(trace.get("target_insertion_depth", 0.05) or 0.05) * 0.90
+    meta = metadata(trace)
+    lateral_threshold = float(meta.get("success_lateral_threshold", 0.012))
+    axis_threshold = float(meta.get("success_axis_threshold", 0.85))
+    depth_threshold = float(meta.get("success_depth_threshold", 0.045))
+    wall_lateral = float(meta.get("wall_penetration_lateral_threshold", 0.015))
+    wall_depth = float(meta.get("wall_penetration_depth_threshold", 0.0))
 
     row = {
         "task": task,
         "method": METHOD_LABELS.get(method, method),
         "communication_mode": method,
-        "msg_dim": int(MESSAGE_DIMS.get(method, 6)),
+        "msg_dim": int(metadata(trace).get("communication_payload_dim", MESSAGE_DIMS.get(method, 6))),
         "seed": seed,
         "episode_id": int(trace.get("episode_index", 0)),
         "episode_path": str(trace.get("_path", "")),
@@ -458,9 +608,11 @@ def summarize_trace(trace: dict, args) -> dict[str, float | int | str]:
         "final_right_target_dist": float(right_dist[-1]) if length else float("nan"),
         "first_left_reach_step": first_step(left_dist < 0.08),
         "first_right_reach_step": first_step(right_dist < 0.08),
-        "first_left_grasp_step": first_step(left_grasp | (left_closure > 0.35)),
-        "first_right_grasp_step": first_step(right_grasp | (right_closure > 0.35)),
-        "first_dual_grasp_step": first_step(dual_grasp | ((left_closure > 0.35) & (right_closure > 0.35))),
+        "first_left_grasp_step": first_post_reset_event(left_grasp | (left_closure > 0.35)),
+        "first_right_grasp_step": first_post_reset_event(right_grasp | (right_closure > 0.35)),
+        "first_dual_grasp_step": first_post_reset_event(
+            dual_grasp | ((left_closure > 0.35) & (right_closure > 0.35))
+        ),
         "first_lift_step": first_step(hprog > 0.20),
         "success_step": success_step,
         "max_hold_steps": max_consecutive(hold | bool_series(trace, "success_signal", length)),
@@ -482,7 +634,7 @@ def summarize_trace(trace: dict, args) -> dict[str, float | int | str]:
         "first_success_condition_step": first_step(
             (lateral < lateral_threshold) & (axis > axis_threshold) & (depth > depth_threshold)
         ),
-        "side_wall_penetration": int(np.any((depth > 0.0) & (lateral > 0.015))),
+        "side_wall_penetration": int(np.any((depth > wall_depth) & (lateral > wall_lateral))),
         "left_motion_norm_mean": safe_mean(np.linalg.norm(left_motion, axis=-1)),
         "right_motion_norm_mean": safe_mean(np.linalg.norm(right_motion, axis=-1)),
         "left_context_mean": safe_mean(left_context.reshape(-1)),
@@ -620,7 +772,7 @@ def ablation_summary(seed_rows: list[dict]) -> list[dict]:
         proposed = row.get("Motion Context", float("nan"))
         motion = row.get("Motion Only", float("nan"))
         context = row.get("Context Only", float("nan"))
-        none = row.get("None", float("nan"))
+        none = row.get("No Communication", float("nan"))
         row["Motion Context - Motion Only"] = proposed - motion if math.isfinite(proposed + motion) else float("nan")
         row["Motion Context - Context Only"] = proposed - context if math.isfinite(proposed + context) else float("nan")
         row["Motion Context - None"] = proposed - none if math.isfinite(proposed + none) else float("nan")
@@ -639,6 +791,26 @@ def failure_breakdown(rows: list[dict]) -> list[dict]:
                 "Failure Reason": reason,
                 "Count": len(group),
                 "Fraction": len(group) / max(total, 1),
+            }
+        )
+    return out
+
+
+def outcome_performance(rows: list[dict]) -> list[dict]:
+    """Separate cumulative return from per-step reward for success/failure audits."""
+
+    out = []
+    for (task, method, success), group in sorted(group_rows(rows, ("task", "method", "success")).items()):
+        out.append(
+            {
+                "Task": task,
+                "Method": method,
+                "Outcome": "Success" if int(success) else "Failure",
+                "Episodes": len(group),
+                "Success Rate": safe_mean([row["success"] for row in group]),
+                "Cumulative Return Mean": safe_mean([row["episode_return"] for row in group]),
+                "Per-Step Reward Mean": safe_mean([row["mean_return"] for row in group]),
+                "Episode Length Mean": safe_mean([row["episode_length"] for row in group]),
             }
         )
     return out
@@ -663,6 +835,12 @@ def coordination_timing(rows: list[dict]) -> list[dict]:
             {
                 "Task": task,
                 "Method": method,
+                "Episodes": len(group),
+                "Reach Pair Count": len(reach_gap),
+                "Grasp Pair Count": len(grasp_gap),
+                "Dual Grasp Count": sum(math.isfinite(float(row["first_dual_grasp_step"])) for row in group),
+                "Lift Count": sum(math.isfinite(float(row["first_lift_step"])) for row in group),
+                "Success Count": sum(math.isfinite(float(row["success_step"])) for row in group),
                 "Left Reach Step": safe_mean([row["first_left_reach_step"] for row in group]),
                 "Right Reach Step": safe_mean([row["first_right_reach_step"] for row in group]),
                 "Reach Gap": safe_mean(reach_gap),
@@ -677,7 +855,9 @@ def coordination_timing(rows: list[dict]) -> list[dict]:
     return out
 
 
-def message_statistics(traces: list[dict], args) -> list[dict]:
+def message_statistics(traces: list[dict], args, *, policy_input: bool = False) -> list[dict]:
+    """Summarize raw outgoing descriptors or normalized received actor slots."""
+
     rows = []
     for trace in traces:
         length = episode_len(trace)
@@ -685,10 +865,12 @@ def message_statistics(traces: list[dict], args) -> list[dict]:
         method = infer_method(trace, args.method)
         seed = infer_seed(trace, args.seed)
         for side in ("left", "right"):
-            motion = vector_series(trace, f"{side}_motion", 3, length)
-            context = context_series(trace, side, length)
-            features = np.concatenate([motion, context], axis=-1) if length else np.zeros((0, 6))
-            names = [*MOTION_NAMES, *CONTEXT_NAMES]
+            if policy_input:
+                features, names = payload_series(trace, side, method, length)
+                representation = "policy_input_normalized_received"
+            else:
+                features, names = raw_payload_series(trace, side, method, length)
+                representation = "raw_outgoing_physical"
             for idx, name in enumerate(names):
                 values = features[:, idx] if features.size else np.zeros(0)
                 rows.append(
@@ -697,11 +879,12 @@ def message_statistics(traces: list[dict], args) -> list[dict]:
                         "Method": METHOD_LABELS.get(method, method),
                         "Communication Mode": method,
                         "Seed": seed,
+                        "Representation": representation,
                         "Side": side,
                         "Feature": name,
                         "Mean": safe_mean(values),
                         "Std": safe_std(values),
-                        "Saturation Ratio": safe_mean(np.abs(values) >= 0.99),
+                        "Saturation Ratio": saturation_ratio(trace, method, name, values),
                         "Zero Ratio": safe_mean(np.abs(values) < 1.0e-6),
                         "Count": int(values.shape[0]),
                     }
@@ -732,10 +915,14 @@ def peg_phase_masks(trace: dict, length: int) -> dict[str, np.ndarray]:
     lateral = scalar_series(trace, "lateral_error", length)
     axis = scalar_series(trace, "axis_alignment", length)
     depth = scalar_series(trace, "insertion_depth", length)
+    meta = metadata(trace)
+    lateral_threshold = float(meta.get("success_lateral_threshold", 0.012))
+    axis_threshold = float(meta.get("success_axis_threshold", 0.85))
+    depth_threshold = float(meta.get("success_depth_threshold", 0.045))
     approach = tip > 0.05
-    align = (tip <= 0.05) & ((lateral > 0.008) | (axis < 0.92))
-    insert = (depth > 0.0) & (depth <= 0.045)
-    hold = depth > 0.045
+    align = (tip <= 0.05) & ((lateral > lateral_threshold) | (axis < axis_threshold))
+    insert = (depth > 0.0) & (depth <= depth_threshold)
+    hold = depth > depth_threshold
     return {
         "approach": approach,
         "align": align,
@@ -754,14 +941,11 @@ def message_phase_statistics(traces: list[dict], args) -> list[dict]:
         seed = infer_seed(trace, args.seed)
         masks = peg_phase_masks(trace, length) if task == "Peg" else lift_phase_masks(trace, length)
         for side in ("left", "right"):
-            features = np.concatenate(
-                [vector_series(trace, f"{side}_motion", 3, length), context_series(trace, side, length)],
-                axis=-1,
-            )
+            features, names = raw_payload_series(trace, side, method, length)
             for phase, mask in masks.items():
                 if not np.any(mask):
                     continue
-                for idx, name in enumerate([*MOTION_NAMES, *CONTEXT_NAMES]):
+                for idx, name in enumerate(names):
                     buckets[(task, METHOD_LABELS.get(method, method), method, seed, side, phase, name)].extend(
                         features[mask, idx].tolist()
                     )
@@ -792,11 +976,8 @@ def success_failure_message_comparison(traces: list[dict], args) -> list[dict]:
         method = infer_method(trace, args.method)
         outcome = "success" if bool_success(trace) else "failure"
         for side in ("left", "right"):
-            features = np.concatenate(
-                [vector_series(trace, f"{side}_motion", 3, length), context_series(trace, side, length)],
-                axis=-1,
-            )
-            for idx, name in enumerate([*MOTION_NAMES, *CONTEXT_NAMES]):
+            features, names = raw_payload_series(trace, side, method, length)
+            for idx, name in enumerate(names):
                 buckets[(task, METHOD_LABELS.get(method, method), method, outcome, side, name)].extend(
                     features[:, idx].tolist()
                 )
@@ -865,7 +1046,11 @@ def plot_overview(trace: dict, out_path: Path, smooth_window: int) -> None:
     tilt = scalar_series(trace, "object_tilt_deg", length)
 
     fig, axes = plt.subplots(6, 1, figsize=(16, 18), sharex=True)
-    fig.suptitle(f"Paper Motion Context Overview: episode {trace.get('episode_index', 0)}", fontsize=16)
+    method = METHOD_LABELS.get(infer_method(trace, None), infer_method(trace, None))
+    fig.suptitle(
+        f"OpenArm Motion Context Overview: {method}, episode {trace.get('episode_index', 0)}",
+        fontsize=16,
+    )
 
     axes[0].plot(steps, np.linalg.norm(left_motion, axis=-1), label="L signed motion norm")
     axes[0].plot(steps, np.linalg.norm(right_motion, axis=-1), label="R signed motion norm")
@@ -916,19 +1101,22 @@ def plot_overview(trace: dict, out_path: Path, smooth_window: int) -> None:
 def plot_context_summary(rows: list[dict], out_path: Path) -> None:
     if not rows:
         return
-    labels = list(CONTEXT_NAMES)
-    x = np.arange(len(labels))
+    method_rows = group_rows(rows, ("communication_mode",))
+    methods = [method for method in METHOD_ORDER if (method,) in method_rows]
+    x = np.arange(len(methods))
     width = 0.35
-    left = [safe_mean([float(row[f"left_{name}_mean"]) for row in rows]) for name in labels]
-    right = [safe_mean([float(row[f"right_{name}_mean"]) for row in rows]) for name in labels]
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.bar(x - width / 2, left, width, label="L")
-    ax.bar(x + width / 2, right, width, label="R")
-    ax.set_xticks(x, labels)
-    ax.set_ylim(0.0, 1.55)
-    ax.set_title("Mean Proprioceptive Motion Context")
-    ax.grid(True, axis="y", alpha=0.25)
-    ax.legend()
+    fig, axes = plt.subplots(1, len(CONTEXT_NAMES), figsize=(16, 5), sharey=True)
+    for axis, name in zip(axes, CONTEXT_NAMES):
+        left = [safe_mean([float(row[f"left_{name}_mean"]) for row in method_rows[(method,)]]) for method in methods]
+        right = [safe_mean([float(row[f"right_{name}_mean"]) for row in method_rows[(method,)]]) for method in methods]
+        axis.bar(x - width / 2, left, width, label="L")
+        axis.bar(x + width / 2, right, width, label="R")
+        axis.set_xticks(x, [METHOD_LABELS.get(method, method) for method in methods], rotation=20, ha="right")
+        axis.set_title(name.replace("_", " ").title())
+        axis.grid(True, axis="y", alpha=0.25)
+    axes[0].set_ylabel("episode mean")
+    axes[0].legend()
+    fig.suptitle("Proprioceptive Motion Context by Communication Method")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -937,7 +1125,17 @@ def plot_context_summary(rows: list[dict], out_path: Path) -> None:
 def plot_ablation(rows: list[dict], out_path: Path) -> None:
     if not rows:
         return
-    methods = ("None", "Motion Only", "Context Only", "Motion Context")
+    methods = ("No Communication", "Motion Only", "Context Only", "Motion Context")
+    available = {
+        method
+        for method in methods
+        if any(math.isfinite(float(row.get(method, float("nan")))) for row in rows)
+    }
+    if len(available) < 2:
+        if out_path.exists():
+            out_path.unlink()
+        print("[INFO] Skipped ablation.png: fewer than two communication methods have evaluation data.")
+        return
     tasks = [row["Task"] for row in rows]
     x = np.arange(len(tasks))
     width = 0.18
@@ -1017,7 +1215,7 @@ def plot_cumulative_eval_success(rows: list[dict], out_dir: Path) -> None:
 
 
 def print_readiness(method_rows: list[dict], message_rows: list[dict], ablation_rows: list[dict]) -> None:
-    print("\n=== Paper Analysis Summary ===")
+    print("\n=== Motion Context Analysis Summary ===")
     for row in method_rows:
         print(
             f"{row['Task']:>4} | {row['Method']:<18} | success={row['Success Rate']} "
@@ -1030,12 +1228,17 @@ def print_readiness(method_rows: list[dict], message_rows: list[dict], ablation_
         full = by_task_mode.get((task, "full_partner_observation"))
         if proposed and none:
             delta = 100.0 * (proposed["Success Rate Mean"] - none["Success Rate Mean"])
-            print(f"[COMPARE] {task}: Motion Context - None = {delta:+.1f} pp")
+            print(f"[COMPARE] {task}: Motion Context - No Communication = {delta:+.1f} pp")
         if proposed and full:
             delta = 100.0 * (proposed["Success Rate Mean"] - full["Success Rate Mean"])
             print(f"[COMPARE] {task}: Motion Context - Full Observation = {delta:+.1f} pp")
 
-    saturation = [float(row["Saturation Ratio"]) for row in message_rows if str(row["Communication Mode"]) == "motion_context"]
+    saturation = [
+        float(row["Saturation Ratio"])
+        for row in message_rows
+        if str(row["Communication Mode"]) == "motion_context"
+        and math.isfinite(float(row["Saturation Ratio"]))
+    ]
     zero = [float(row["Zero Ratio"]) for row in message_rows if str(row["Communication Mode"]) == "motion_context"]
     max_sat = max(saturation) if saturation else 0.0
     max_zero = max(zero) if zero else 0.0
@@ -1048,7 +1251,7 @@ def print_readiness(method_rows: list[dict], message_rows: list[dict], ablation_
         for row in ablation_rows
     ):
         status = "REVIEW"
-        reason = "Motion Context does not outperform None in at least one task"
+        reason = "Motion Context does not outperform No Communication in at least one task"
     else:
         status = "READY"
         reason = "main traces are analyzable and message statistics are non-degenerate"
@@ -1064,30 +1267,59 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     traces = load_traces(trace_dir, args.episode)
+    validation_rows = []
+    for trace in traces:
+        issues = validate_trace(trace)
+        validation_rows.append(
+            {
+                "episode_path": str(trace.get("_path", "")),
+                "valid": int(not issues),
+                "issue_count": len(issues),
+                "issues": "; ".join(issues),
+            }
+        )
+    invalid_count = sum(not bool(row["valid"]) for row in validation_rows)
+    if invalid_count:
+        print(f"[WARN] {invalid_count}/{len(traces)} trace(s) have schema issues; see trace_validation.csv")
     rows = [summarize_trace(trace, args) for trace in traces]
     seed_rows = summarize_seed(rows)
     method_rows = summarize_method(seed_rows)
     ablation_rows = ablation_summary(seed_rows)
     failure_rows = failure_breakdown(rows)
+    outcome_rows = outcome_performance(rows)
     timing_rows = coordination_timing(rows)
     message_rows = message_statistics(traces, args)
+    policy_input_rows = message_statistics(traces, args, policy_input=True)
     phase_rows = message_phase_statistics(traces, args)
     success_failure_rows = success_failure_message_comparison(traces, args)
     curve_rows = cumulative_eval_success(rows, args.ci)
 
     write_csv(out_dir / "eval_episodes.csv", rows)
-    write_csv(out_dir / "episode_summary.csv", rows)
+    write_csv(out_dir / "trace_validation.csv", validation_rows)
     write_csv(out_dir / "summary_by_seed.csv", seed_rows)
     write_csv(out_dir / "summary_by_method.csv", method_rows)
     write_csv(out_dir / "ablation_summary.csv", ablation_rows)
     write_csv(out_dir / "failure_breakdown.csv", failure_rows)
+    write_csv(out_dir / "outcome_performance.csv", outcome_rows)
     write_csv(out_dir / "coordination_timing.csv", timing_rows)
+    write_csv(out_dir / "message_raw_statistics.csv", message_rows)
+    write_csv(out_dir / "message_policy_input_normalized_statistics.csv", policy_input_rows)
+    # Backward-compatible filename now contains raw, physically interpretable values.
     write_csv(out_dir / "message_statistics.csv", message_rows)
     write_csv(out_dir / "message_phase_statistics.csv", phase_rows)
     write_csv(out_dir / "success_failure_message_comparison.csv", success_failure_rows)
     write_csv(out_dir / "cumulative_eval_success.csv", curve_rows)
 
-    plot_overview(traces[0], out_dir / "overview.png", max(int(args.smooth_window), 1))
+    legacy_overview = out_dir / "overview.png"
+    if legacy_overview.exists():
+        legacy_overview.unlink()
+    traces_by_method = group_rows(
+        [{"trace": trace, "method": infer_method(trace, args.method)} for trace in traces],
+        ("method",),
+    )
+    for (method,), group in sorted(traces_by_method.items()):
+        trace = min(group, key=lambda item: int(item["trace"].get("episode_index", 0)))["trace"]
+        plot_overview(trace, out_dir / f"overview_{method}.png", max(int(args.smooth_window), 1))
     plot_context_summary(rows, out_dir / "context_summary.png")
     plot_ablation(ablation_rows, out_dir / "ablation.png")
     plot_failure_breakdown(failure_rows, out_dir)

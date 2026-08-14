@@ -1,6 +1,6 @@
 base_frame: openarm_body_link0
-control_rate_hz: 30.0
-checkpoint: logs/skrl/openarm_paper_re_lift/paper_re_lift_motion_context/checkpoints/best_agent.pt
+control_rate_hz: 60.0
+checkpoint: artifacts/checkpoints/lift_motion_context/best_agent.pt
 dry_run: true
 safety:
   max_joint_step: 0.04

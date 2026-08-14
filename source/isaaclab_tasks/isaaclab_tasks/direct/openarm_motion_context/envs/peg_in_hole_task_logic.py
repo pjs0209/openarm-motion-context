@@ -1031,6 +1031,14 @@ def collect_openarm_re_trace_signals(env, ctx: dict, env_index: int = 0) -> dict
     keypoints_held = keypoint_rewards["keypoints_held"]
     keypoints_fixed = keypoint_rewards["keypoints_fixed"]
     keypoint_offsets = keypoint_rewards["keypoint_offsets"]
+    axis_gate, lateral_gate, insertion_gate = _smooth_insertion_gate(
+        metrics["axis_alignment"], metrics["lateral_error"]
+    )
+    depth_progress = torch.clamp(
+        metrics["insertion_depth"] / max(float(env.cfg.target_insertion_depth), 1.0e-6),
+        0.0,
+        1.0,
+    )
     inserted_ok = bool(
         (metrics["lateral_error"][idx] < float(env.cfg.success_lateral_threshold))
         and (metrics["axis_alignment"][idx] > float(env.cfg.success_axis_threshold))
@@ -1057,12 +1065,21 @@ def collect_openarm_re_trace_signals(env, ctx: dict, env_index: int = 0) -> dict
         "keypoint_spacing": float(env.cfg.keypoint_spacing),
         "keypoint_offsets": keypoint_offsets.detach().float().cpu().tolist(),
         "keypoint_dist": float(keypoint_dist[idx].detach().cpu()),
+        "preinsert_dist": float(keypoint_rewards["preinsert_dist"][idx].detach().cpu()),
+        "insert_pose_dist": float(keypoint_rewards["insert_pose_dist"][idx].detach().cpu()),
         "keypoint_dist_per_point": keypoint_dist_per_point[idx].detach().float().cpu().tolist(),
         "keypoints_held_w": keypoints_held[idx].detach().float().cpu().tolist(),
         "keypoints_target_w": keypoints_fixed[idx].detach().float().cpu().tolist(),
-        "keypoint_reward_baseline": log_scalar("peg_hole/r_keypoint_baseline"),
-        "keypoint_reward_coarse": log_scalar("peg_hole/r_keypoint_coarse"),
-        "keypoint_reward_fine": log_scalar("peg_hole/r_keypoint_fine"),
+        "keypoint_reward_baseline": float(keypoint_rewards["r_preinsert"][idx].detach().cpu()),
+        "keypoint_reward_coarse": float((insertion_gate * keypoint_rewards["r_insert_pose"])[idx].detach().cpu()),
+        "keypoint_reward_fine": float((insertion_gate * depth_progress)[idx].detach().cpu()),
+        "preinsert_reward": float(keypoint_rewards["r_preinsert"][idx].detach().cpu()),
+        "insert_pose_reward": float((insertion_gate * keypoint_rewards["r_insert_pose"])[idx].detach().cpu()),
+        "depth_reward": float((insertion_gate * depth_progress)[idx].detach().cpu()),
+        "axis_gate": float(axis_gate[idx].detach().cpu()),
+        "lateral_gate": float(lateral_gate[idx].detach().cpu()),
+        "insertion_gate": float(insertion_gate[idx].detach().cpu()),
+        "depth_progress": float(depth_progress[idx].detach().cpu()),
         "left_ee_pos_b": obs_vector(left_own, 0, 3),
         "right_ee_pos_b": obs_vector(right_own, 0, 3),
         "left_ee_quat_b": obs_vector(left_own, 3, 7),

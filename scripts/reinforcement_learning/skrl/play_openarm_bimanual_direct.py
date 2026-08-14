@@ -4,11 +4,10 @@
 """skrl 기반 OpenArm 양팔 lift policy 실행/evaluation 진입점.
 
 학습 script와 같은 config/runtime 흐름을 사용하지만, 여기서는 checkpoint loading,
-deterministic/stochastic evaluation, MotionMode trace 저장에 집중한다.
+deterministic/stochastic evaluation, motion-context trace 저장에 집중한다.
 
-MotionMode 분석을 하려면 ``--save_mode_trace``와 고유한 ``--mode_trace_dir``를
-넘긴다. trainer는 episode마다 JSON 하나를 저장하며, 여기에는 task signal,
-mode probability, analyze_motion_mode_trace.py가 필요한 metadata가 들어간다.
+motion-context 분석에는 ``--save_motion_context_trace``와 고유한
+``--motion_context_trace_dir``를 사용한다. 기존 mode-trace 옵션도 호환된다.
 """
 
 import argparse
@@ -43,12 +42,21 @@ parser.add_argument("--num_steps", type=int, default=1000, help="Number of evalu
 parser.add_argument("--debug_interval", type=int, default=25, help="Print debug stats every N steps.")
 parser.add_argument("--intent_head_checkpoint", type=str, default=None, help="Path to latent-interaction-intent module weights.")
 parser.add_argument(
+    "--save_motion_context_trace",
+    nargs="?",
+    const=True,
+    default=False,
+    type=_str_to_bool,
+    help="Save motion-context communication traces during play/eval.",
+)
+parser.add_argument("--motion_context_trace_dir", type=str, default=None, help="Directory for motion-context trace JSON files.")
+parser.add_argument(
     "--save_mode_trace",
     nargs="?",
     const=True,
     default=False,
     type=_str_to_bool,
-    help="Save motion-mode intent traces during play/eval.",
+    help="Deprecated alias for --save_motion_context_trace.",
 )
 parser.add_argument("--mode_trace_dir", type=str, default=None, help="Directory for motion-mode trace JSON files.")
 parser.add_argument("--mode_trace_env_index", type=int, default=None, help="Environment index to record in motion-mode traces.")
@@ -281,10 +289,11 @@ def main(env_cfg, agent_cfg):
     trainer_cfg["debug_interval"] = args_cli.debug_interval
     trainer_cfg["mode_trace_task"] = args_cli.task
     trainer_cfg["mode_trace_checkpoint"] = checkpoint_path
-    if args_cli.save_mode_trace:
+    if args_cli.save_motion_context_trace or args_cli.save_mode_trace:
         trainer_cfg["save_mode_trace"] = True
-    if args_cli.mode_trace_dir is not None:
-        trainer_cfg["mode_trace_dir"] = args_cli.mode_trace_dir
+    trace_dir = args_cli.motion_context_trace_dir or args_cli.mode_trace_dir
+    if trace_dir is not None:
+        trainer_cfg["mode_trace_dir"] = trace_dir
     if args_cli.mode_trace_env_index is not None:
         trainer_cfg["mode_trace_env_index"] = args_cli.mode_trace_env_index
     if args_cli.mode_trace_format is not None:
