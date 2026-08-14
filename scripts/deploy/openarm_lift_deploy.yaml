@@ -131,8 +131,9 @@ joints:
     - openarm_right_finger_joint1
 
 default_joint_pos:
-  left_arm: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-  right_arm: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  # Same task start pose as envs/robot_cfg.py and the primary deploy configs.
+  left_arm: [-0.52359878, -0.34906585, 0.34906585, 2.26892803, -0.09599311, -0.05235988, 1.55334303]
+  right_arm: [0.52359878, 0.34906585, -0.34906585, 2.26892803, 0.09599311, 0.05235988, -1.55334303]
 
 apriltag:
   ids: [0, 1, 2]
