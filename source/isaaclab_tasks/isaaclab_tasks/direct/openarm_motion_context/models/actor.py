@@ -79,8 +79,21 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         partner_intent_embed_dim: int = 32,
         communication_feature_dim: int | None = None,
     ):
-        Model.__init__(self, observation_space, action_space, device)
-        GaussianMixin.__init__(self, clip_actions, clip_log_std, min_log_std, max_log_std, reduction)
+        Model.__init__(
+            self,
+            observation_space=observation_space,
+            state_space=None,
+            action_space=action_space,
+            device=device,
+        )
+        GaussianMixin.__init__(
+            self,
+            clip_actions=clip_actions,
+            clip_log_std=clip_log_std,
+            min_log_std=min_log_std,
+            max_log_std=max_log_std,
+            reduction=reduction,
+        )
 
         self.communication_mode = str(communication_mode)
         self.agent_id = str(agent_id)
@@ -267,8 +280,17 @@ class CriticValueModel(DeterministicMixin, Model):
     """task_logic.critic_state()가 만든 centralized critic state를 보는 value network."""
 
     def __init__(self, observation_space, action_space, device, hidden_sizes: list[int], clip_actions: bool = False):
-        Model.__init__(self, observation_space, action_space, device)
-        DeterministicMixin.__init__(self, clip_actions)
+        Model.__init__(
+            self,
+   	    observation_space=observation_space,
+   	    state_space=None,
+   	    action_space=action_space,
+	    device=device,
+	)
+        DeterministicMixin.__init__(
+            self,
+            clip_actions=clip_actions,
+        )
         self.value_net = _build_mlp(self.num_observations, hidden_sizes, 1)
 
     def compute(self, inputs, role=""):
