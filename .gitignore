@@ -23,3 +23,6 @@ videos/
 
 # Local TF/debug output
 realsense_d435i_color_optical_frame
+
+.venv-openarm-deploy/
+.openarm-ros/

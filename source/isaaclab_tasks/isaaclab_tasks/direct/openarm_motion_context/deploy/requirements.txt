@@ -1,0 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+skrl==1.4.3
+gymnasium==1.2.0
+numpy==1.26.4
+PyYAML==6.0.3
+packaging==26.3
+tqdm==4.70.1
+tensorboard==2.21.0

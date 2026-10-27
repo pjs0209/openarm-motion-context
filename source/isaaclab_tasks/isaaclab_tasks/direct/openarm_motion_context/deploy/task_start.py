@@ -81,6 +81,7 @@ def main() -> int:
 
     import rclpy
     from sensor_msgs.msg import JointState
+    from std_msgs.msg import Float64MultiArray
     from trajectory_msgs.msg import JointTrajectory
 
     cfg = _load_config(args.config)
@@ -88,6 +89,7 @@ def main() -> int:
     targets = cfg["default_joint_pos"]
     topics = cfg["topics"]
     command_topics = topics["commands"]
+    forward_position = cfg["action"].get("arm_command_type", "joint_trajectory") == "forward_position"
 
     group_names = {
         "left_arm": list(joints["left_arm"]),
@@ -120,7 +122,12 @@ def main() -> int:
 
     node.create_subscription(JointState, topics["joint_states"], on_joint_state, 10)
     publishers = {
-        side: node.create_publisher(JointTrajectory, command_topics[side], 10) for side in group_names
+        side: node.create_publisher(
+            Float64MultiArray if forward_position and side.endswith("_arm") else JointTrajectory,
+            command_topics[side],
+            1,
+        )
+        for side in group_names
     }
 
     deadline = time.monotonic() + args.state_timeout
@@ -161,7 +168,36 @@ def main() -> int:
     hold_seconds = 1.0
     steps = max(2, int(math.ceil(args.duration * args.rate)))
 
-    for side in group_names:
+    def publish_positions(side, positions):
+        if forward_position and side.endswith("_arm"):
+            message = Float64MultiArray()
+            message.data = list(positions)
+        else:
+            message = _trajectory_message(group_names[side], positions, args.command_lead)
+        publishers[side].publish(message)
+
+    if forward_position:
+        started = time.monotonic()
+        try:
+            while rclpy.ok() and time.monotonic() - started < args.duration:
+                rclpy.spin_once(node, timeout_sec=0.0)
+                if time.monotonic() - latest_state_time > 0.5:
+                    raise RuntimeError("JointState stream became stale during task-start motion")
+                progress = (time.monotonic() - started) / args.duration
+                for side in group_names:
+                    publish_positions(side, cosine_blend(starts[side], group_targets[side], progress))
+                time.sleep(1.0 / args.rate)
+        except (KeyboardInterrupt, RuntimeError):
+            for side in group_names:
+                measured = positions_by_name(list(latest_state.name), list(latest_state.position), group_names[side])
+                publish_positions(side, measured)
+            node.destroy_node()
+            rclpy.shutdown()
+            raise
+        for side in group_names:
+            publish_positions(side, group_targets[side])
+
+    for side in () if forward_position else group_names:
         trajectory = JointTrajectory()
         trajectory.joint_names = list(group_names[side])
 
@@ -191,11 +227,7 @@ def main() -> int:
                 group_targets[side],
                 progress,
             )
-            point_time = (
-                args.command_lead
-                + hold_seconds
-                + args.duration * progress
-            )
+            point_time = args.command_lead + hold_seconds + args.duration * progress
             trajectory.points.append(
                 _trajectory_message(
                     group_names[side],
@@ -224,16 +256,10 @@ def main() -> int:
                 list(latest_state.position),
                 names,
             )
-            publishers[side].publish(
-                _trajectory_message(names, measured, max(args.command_lead, 0.1))
-            )
+            publish_positions(side, measured)
 
     motion_deadline = (
-        time.monotonic()
-        + args.command_lead
-        + hold_seconds
-        + args.duration
-        + 0.5
+        time.monotonic() + args.command_lead + hold_seconds + (0.0 if forward_position else args.duration) + 0.5
     )
 
     try:
@@ -242,37 +268,24 @@ def main() -> int:
 
             if time.monotonic() - latest_state_time > 0.5:
                 publish_emergency_hold("JointState stream became stale")
-                rclpy.spin_once(node, timeout_sec=0.1)
-                node.destroy_node()
-                rclpy.shutdown()
-                raise RuntimeError(
-                    "JointState stream became stale during task-start motion"
-                )
+                raise RuntimeError("JointState stream became stale during task-start motion")
     except KeyboardInterrupt:
         publish_emergency_hold("interrupted by operator")
-        rclpy.spin_once(node, timeout_sec=0.1)
-        node.destroy_node()
-        rclpy.shutdown()
-        return 130
+        raise
 
     settle_deadline = time.monotonic() + 1.0
     while rclpy.ok() and time.monotonic() < settle_deadline:
         rclpy.spin_once(node, timeout_sec=0.05)
 
     final_errors = {}
-    if latest_state is not None:
-        for side, names in group_names.items():
-            actual = positions_by_name(list(latest_state.name), list(latest_state.position), names)
-            final_errors[side] = max(
-                abs(target - value) for target, value in zip(group_targets[side], actual, strict=True)
-            )
+    for side, names in group_names.items():
+        actual = positions_by_name(list(latest_state.name), list(latest_state.position), names)
+        final_errors[side] = max(abs(target - value) for target, value in zip(group_targets[side], actual, strict=True))
 
     node.destroy_node()
     rclpy.shutdown()
     arm_error = max((final_errors.get("left_arm", math.inf), final_errors.get("right_arm", math.inf)))
-    gripper_error = max(
-        (final_errors.get("left_gripper", math.inf), final_errors.get("right_gripper", math.inf))
-    )
+    gripper_error = max((final_errors.get("left_gripper", math.inf), final_errors.get("right_gripper", math.inf)))
     if arm_error > args.goal_tolerance or gripper_error > args.gripper_tolerance:
         raise RuntimeError(
             "Task start pose was not reached within tolerance: "

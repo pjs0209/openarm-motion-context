@@ -1,21 +1,21 @@
 /**:
   ros__parameters:
-    image_transport: raw
     family: 36h11
     size: 0.04
+    image_transport: raw
     max_hamming: 0
-
-    detector:
-      threads: 2
-      decimate: 1.0
-      blur: 0.0
-      refine: true
-      sharpening: 0.25
-      debug: false
-
+    qos_profile: sensor_data
     pose_estimation_method: pnp
-
     tag:
-      ids: [0, 1, 2]
-      frames: [chest_apriltag_00, chest_apriltag_01, chest_apriltag_02]
-      sizes: [0.04, 0.04, 0.04]
+      ids:
+      - 0
+      - 1
+      - 2
+      frames:
+      - chest_apriltag_00
+      - chest_apriltag_01
+      - chest_apriltag_02
+      sizes:
+      - 0.04
+      - 0.016
+      - 0.016
