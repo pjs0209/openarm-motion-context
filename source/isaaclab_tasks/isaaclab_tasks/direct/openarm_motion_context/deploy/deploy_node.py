@@ -87,6 +87,7 @@ from isaaclab_tasks.direct.openarm_motion_context.deploy.safety import (  # noqa
     target_delta_within_limit,
     visible_tag_count,
 )
+from isaaclab_tasks.direct.openarm_motion_context.deploy.telemetry import DeploymentTelemetry  # noqa: E402
 from isaaclab_tasks.direct.openarm_motion_context.models.actor import MotionContextPolicyModel  # noqa: E402
 from isaaclab_tasks.direct.openarm_motion_context.perception.apriltag_geometry import (  # noqa: E402
     AprilTagDeployPoseProvider,
@@ -284,6 +285,7 @@ class OpenArmPaperReLiftDeployNode:
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self.base_frame = str(cfg.get("base_frame", "openarm_body_link0"))
+        self.telemetry = DeploymentTelemetry(self.node, self.base_frame)
         self.rate_hz = float(cfg.get("control_rate_hz", 60.0))
         self.dt = 1.0 / max(self.rate_hz, 1.0e-6)
         self.dry_run = bool(cfg.get("dry_run", True))
@@ -851,17 +853,6 @@ class OpenArmPaperReLiftDeployNode:
     def _publish_command(
         self, left_q: torch.Tensor, right_q: torch.Tensor, left_grip: torch.Tensor, right_grip: torch.Tensor
     ) -> None:
-        if self.dry_run:
-            now = time.time()
-            if now - self.last_command_time > 1.0:
-                self.node.get_logger().info(
-                    "dry_run command "
-                    f"Lq={left_q.detach().cpu().numpy().round(3).tolist()} "
-                    f"Rq={right_q.detach().cpu().numpy().round(3).tolist()} "
-                    f"Lgrip={float(left_grip[0]):.3f} Rgrip={float(right_grip[0]):.3f}"
-                )
-                self.last_command_time = now
-            return
         commands = {
             "left_arm": (self.left_arm_joints, left_q),
             "right_arm": (self.right_arm_joints, right_q),
@@ -873,35 +864,56 @@ class OpenArmPaperReLiftDeployNode:
         for name, (joint_names, positions) in commands.items():
             if name in self.hardware_limits:
                 lower, upper = self.hardware_limits[name]
-                positions = positions.clamp(min=lower, max=upper)
+                commands[name] = (joint_names, positions.clamp(min=lower, max=upper))
+        self.telemetry.target(commands)
+        if self.dry_run:
+            left_q, right_q = commands["left_arm"][1], commands["right_arm"][1]
+            left_grip, right_grip = commands["left_gripper"][1], commands["right_gripper"][1]
+            self.telemetry.state("dry_run", "Policy candidate only; motor commands are disabled")
+            now = time.time()
+            if now - self.last_command_time > 1.0:
+                self.node.get_logger().info(
+                    "dry_run command "
+                    f"Lq={left_q.detach().cpu().numpy().round(3).tolist()} "
+                    f"Rq={right_q.detach().cpu().numpy().round(3).tolist()} "
+                    f"Lgrip={float(left_grip[0]):.3f} Rgrip={float(right_grip[0]):.3f}"
+                )
+                self.last_command_time = now
+            return
+        for name, (joint_names, positions) in commands.items():
             if name.endswith("_arm") and self.arm_command_type == "forward_position":
                 message = self.Float64MultiArray()
                 message.data = positions.detach().cpu().tolist()
             else:
                 message = self._trajectory_message(joint_names, positions)
             self.command_pubs[name].publish(message)
+        self.telemetry.state("publishing", "Targets sent to arm and gripper controllers")
 
     def _control_tick(self) -> None:
         try:
             self._policy_tick()
         except (ValueError, RuntimeError) as exc:
             self._last_policy_tick = None
+            self.telemetry.state("held", str(exc))
             self.node.get_logger().error(f"Policy command held: {exc}", throttle_duration_sec=1.0)
 
     def _policy_tick(self) -> None:
         if not self.dry_run and not self.hardware_limits:
             raise ValueError("Waiting for live robot_description joint limits")
         if not self._is_joint_state_fresh():
+            self.telemetry.state("held", "Waiting for fresh joint states")
             return
         joint_stamp = self.last_joint_state.stamp
         left_ee = self._lookup_pose(str(self.cfg["frames"]["left_ee"]), joint_stamp)
         right_ee = self._lookup_pose(str(self.cfg["frames"]["right_ee"]), joint_stamp)
         if left_ee is None or right_ee is None:
+            self.telemetry.state("held", "Waiting for end-effector TF at the joint-state timestamp")
             return
         tag_pos_camera, tag_quat_camera, visible, camera_stamps = self._collect_apriltag_tensors()
         min_visible_tags = int(self.cfg.get("safety", {}).get("min_visible_tags", 1))
         visible_tags = visible_tag_count(visible)
         if visible_tags < min_visible_tags:
+            self.telemetry.state("held", "Not enough fresh AprilTag detections")
             self.node.get_logger().warn(
                 f"Visible AprilTags below safety threshold ({visible_tags} < {min_visible_tags}); "
                 "holding previous command",
@@ -910,6 +922,7 @@ class OpenArmPaperReLiftDeployNode:
             return
         camera_poses = self._camera_poses(camera_stamps)
         if camera_poses is None:
+            self.telemetry.state("held", "Waiting for camera TF at the image timestamp")
             return
 
         left_ee_pos, left_ee_quat = left_ee
@@ -933,11 +946,34 @@ class OpenArmPaperReLiftDeployNode:
             visible,
         )
         left_own = self._own_obs("left_arm", left_ee_pos, left_ee_quat, left_grip_pos, left_grip_quat)
+        if visible_tags > 0 and self.telemetry.needs_poses():
+            box_pose = self.pose_provider.estimate_box_pose(
+                camera_poses[0],
+                camera_poses[1],
+                tag_pos_camera,
+                tag_quat_camera,
+                visible,
+            )
+            measurement_stamp = min(
+                stamp
+                for camera, detections in enumerate(self.latest_detection_stamps)
+                for tag, stamp in detections.items()
+                if bool(visible[camera, tag])
+            )
+            self.telemetry.poses(
+                measurement_stamp,
+                {
+                    "box": box_pose,
+                    "left_grasp": (left_grip_pos, left_grip_quat),
+                    "right_grasp": (right_grip_pos, right_grip_quat),
+                },
+            )
         right_own = self._own_obs("right_arm", right_ee_pos, right_ee_quat, right_grip_pos, right_grip_quat)
         max_target_delta_norm = self._safety_cfg("max_target_delta_norm", 1.0)
         if not target_delta_within_limit(left_own[22:25], max_target_delta_norm) or not target_delta_within_limit(
             right_own[22:25], max_target_delta_norm
         ):
+            self.telemetry.state("held", "Grasp target delta exceeded the configured safety limit")
             self.node.get_logger().warn(
                 "Grasp target delta exceeded safety limit; holding previous command",
                 throttle_duration_sec=1.0,

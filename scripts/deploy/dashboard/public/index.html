@@ -1,0 +1,265 @@
+<!doctype html>
+<!-- Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+     All rights reserved.
+
+     SPDX-License-Identifier: BSD-3-Clause
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenArm · Deployment Studio</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%230d171e'/%3E%3Cpath d='M12 28V14l8-5 8 5v14M12 21l8 5 8-5' fill='none' stroke='%2375dfc5' stroke-width='3'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/": "/vendor/three/",
+          "three/addons/": "/vendor/three/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg viewBox="0 0 36 36" aria-hidden="true">
+          <path d="M8 27V12l10-6 10 6v15M8 20l10 6 10-6M18 6v13" /></svg
+        ><span>openarm<span class="brand-sub">DEPLOYMENT STUDIO</span></span
+        ><span class="version">01</span>
+      </div>
+      <div class="breadcrumb">
+        Deployment <span>/</span> <strong>3D workspace</strong>
+      </div>
+      <div class="top-status">
+        <span id="source-badge" class="badge neutral">LOCAL</span
+        ><span class="connection"
+          ><i id="connection-dot"></i
+          ><span id="connection-text">Connecting</span></span
+        ><span id="clock" class="mono">—</span>
+      </div>
+    </header>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="workspace-card">
+          <span class="tiny-label">ROBOT</span><strong>OpenArm V1.0</strong
+          ><span>Bimanual · 7 + 7 DOF</span>
+          <div class="hardware-pill"><i></i> ROS 2 Humble</div>
+        </div>
+        <div class="section-label">WORKSPACE</div>
+        <button class="navigation active" id="scene-nav">
+          <svg viewBox="0 0 20 20">
+            <path d="m10 2 7 4v8l-7 4-7-4V6zM3 6l7 4 7-4M10 10v8" /></svg
+          >3D scene<span class="nav-count">3D</span>
+        </button>
+        <button class="navigation" id="joint-nav">
+          <svg viewBox="0 0 20 20"><path d="M3 4v12h14M6 12l3-5 3 3 4-6" /></svg
+          >Joint telemetry<span class="nav-count">14</span>
+        </button>
+        <div class="section-label spaced">SCENE LAYERS</div>
+        <label class="layer"
+          ><span><i class="swatch measured"></i>Measured robot</span
+          ><input type="checkbox" data-layer="measured" checked
+        /></label>
+        <label class="layer"
+          ><span><i class="swatch target"></i>Target overlay</span
+          ><input type="checkbox" data-layer="target" checked
+        /></label>
+        <div class="layer-rule"></div>
+        <label class="layer"
+          ><span><i class="swatch box"></i>Box</span
+          ><input type="checkbox" data-layer="box" checked
+        /></label>
+        <label class="layer"
+          ><span><i class="swatch ball"></i>Ball</span
+          ><input type="checkbox" data-layer="ball" checked
+        /></label>
+        <label class="layer"
+          ><span><i class="swatch peg"></i>Peg</span
+          ><input type="checkbox" data-layer="peg" checked
+        /></label>
+        <label class="layer"
+          ><span><i class="swatch hole"></i>Hole</span
+          ><input type="checkbox" data-layer="hole" checked
+        /></label>
+        <div class="layer-rule"></div>
+        <label class="layer"
+          ><span>Coordinate axes</span
+          ><input type="checkbox" data-layer="axes" checked
+        /></label>
+        <label class="layer"
+          ><span>Ground grid</span
+          ><input type="checkbox" data-layer="grid" checked
+        /></label>
+        <div class="sidebar-bottom">
+          <span class="tiny-label">OBSERVATION ONLY</span>
+          <p>
+            This workspace displays robot state. Motor commands come from the
+            deployment bridge.
+          </p>
+          <div class="local-address mono">127.0.0.1:8765</div>
+        </div>
+      </aside>
+      <main>
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">DEPLOYMENT / MONITOR</div>
+            <h1>
+              Robot workspace<span class="live-tag" id="mode-tag">WAITING</span>
+            </h1>
+            <p>
+              Measured state, target commands, and object estimates in one
+              frame.
+            </p>
+          </div>
+          <div class="heading-actions">
+            <span class="model-state" id="model-state"
+              >Loading robot model…</span
+            ><button id="fit-view" class="button">↗ Fit view</button>
+          </div>
+        </div>
+        <section class="metrics" aria-label="Live telemetry summary">
+          <div class="metric">
+            <div class="metric-label">
+              ROBOT STATE<span class="mini-icon">◉</span>
+            </div>
+            <div id="robot-health" class="metric-value">
+              Waiting<span>for joint states</span>
+            </div>
+            <div id="robot-age" class="metric-foot">
+              No measurement received
+            </div>
+          </div>
+          <div class="metric">
+            <div class="metric-label" id="error-label">
+              TARGET OFFSET<span class="mini-icon">↔</span>
+            </div>
+            <div class="metric-value">
+              <span id="tcp-error" class="number">—</span><span>mm</span>
+            </div>
+            <div id="target-caption" class="metric-foot">
+              No target received
+            </div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">
+              OBJECT ESTIMATES<span class="mini-icon">◇</span>
+            </div>
+            <div class="metric-value">
+              <span id="object-count" class="number">0</span
+              ><span>/ 4 visible</span>
+            </div>
+            <div class="metric-foot">Only fresh, transformed poses</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">
+              CONTROL / VIEW<span class="mini-icon">⌁</span>
+            </div>
+            <div class="metric-value">
+              <span id="control-hz" class="number">—</span><span>Hz</span>
+            </div>
+            <div id="view-rate" class="metric-foot">
+              Waiting for data stream
+            </div>
+          </div>
+        </section>
+        <div class="scene-layout">
+          <section class="scene-panel" aria-label="Interactive 3D robot scene">
+            <div class="scene-toolbar">
+              <div>
+                <span class="scene-dot"></span>3D workspace<span
+                  class="frame-pill mono"
+                  id="base-frame"
+                  >robot base</span
+                >
+              </div>
+              <div class="view-controls">
+                <button data-view="perspective" class="selected">
+                  Perspective</button
+                ><button data-view="front">Front</button
+                ><button data-view="top">Top</button>
+              </div>
+            </div>
+            <div id="viewport">
+              <div id="scene-message" class="scene-message">
+                Loading the OpenArm CAD model…
+              </div>
+              <div id="demo-notice" class="demo-notice" hidden>
+                <strong>DEMO SCENE</strong> Synthetic data · no ROS connection
+              </div>
+              <div class="orientation">
+                <span class="axis-x">X</span><span class="axis-y">Y</span
+                ><span class="axis-z">Z</span>
+              </div>
+              <div class="scene-guide">
+                Drag to orbit <span>·</span> Scroll to zoom
+                <span>·</span> Right-drag to pan
+              </div>
+            </div>
+            <div class="scene-footer">
+              <div>
+                <span><i class="swatch measured"></i>Measured</span
+                ><span
+                  ><i class="swatch target"></i
+                  ><span id="legend-target">Command target</span></span
+                ><span class="legend-arrows">↗ TCP difference</span>
+              </div>
+              <span class="mono" id="scene-update">AWAITING DATA</span>
+            </div>
+          </section>
+          <aside class="inspector">
+            <section class="inspector-section">
+              <div class="inspector-title">
+                <h2>Object poses</h2>
+                <span class="unit">METRES</span>
+              </div>
+              <p class="subtle">
+                Frame: <span id="object-frame" class="mono">—</span>
+              </p>
+              <div id="object-cards"></div>
+              <p class="proxy-note">
+                Shapes are configurable visual proxies. Pose markers follow
+                measured coordinates.
+              </p>
+            </section>
+            <section class="inspector-section">
+              <div class="inspector-title">
+                <h2>Perception</h2>
+                <span class="tiny-label">APRILTAG</span>
+              </div>
+              <div id="camera-cards"></div>
+            </section>
+          </aside>
+        </div>
+        <section class="joint-panel" id="joint-panel">
+          <div class="joint-heading">
+            <div>
+              <h2>Joint telemetry</h2>
+              <span>Measured and target positions · radians</span>
+            </div>
+            <div class="joint-legend">
+              <i class="swatch measured"></i>Measured<i
+                class="swatch target"
+              ></i
+              >Target<span id="joint-source">No target</span>
+            </div>
+          </div>
+          <div class="arm-tables" id="arm-tables"></div>
+        </section>
+        <footer class="page-footer">
+          <span
+            ><i id="footer-dot"></i
+            ><span id="control-detail"
+              >Waiting for the deployment bridge.</span
+            ></span
+          ><span id="source-detail">LOCAL ROS TELEMETRY</span>
+        </footer>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

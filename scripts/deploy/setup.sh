@@ -24,9 +24,10 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   echo "Install ROS 2 Humble on Ubuntu 22.04 first; see the deployment README." >&2
   exit 1
 fi
-for program in git colcon uv; do
+for program in git colcon uv node npm; do
   command -v "${program}" >/dev/null || { echo "Missing command: ${program}" >&2; exit 1; }
 done
+node -e 'if (Number(process.versions.node.split(".")[0]) < 18) { console.error("Dashboard setup requires Node.js 18 or newer"); process.exit(1); }'
 if [[ "${SKIP_ROSDEP}" == false ]]; then
   command -v rosdep >/dev/null || { echo "Missing command: rosdep" >&2; exit 1; }
 fi
@@ -55,7 +56,7 @@ if [[ "${SKIP_ROSDEP}" == false ]]; then
     --dependency-types build --dependency-types buildtool --dependency-types build_export --dependency-types exec \
     --skip-keys "openarm_bimanual_moveit_config rviz2 joint_state_publisher_gui joint_state_publisher ros_gz zed_description"
   # The pinned CAN package uses CLI11 but does not declare it in package.xml.
-  system_packages=(libcli11-dev)
+  system_packages=(libcli11-dev ros-humble-tf2-geometry-msgs)
   if [[ "${ROBOT_ONLY}" == false ]]; then
     system_packages+=(ros-humble-image-proc)
   fi
@@ -70,4 +71,5 @@ colcon --log-base .openarm-ros/log build --base-paths "${paths[@]}" \
 uv venv --allow-existing --python /usr/bin/python3 --system-site-packages .venv-openarm-deploy
 uv pip install --python .venv-openarm-deploy/bin/python \
   -r source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/requirements.txt
+npm ci --prefix scripts/deploy/dashboard --no-audit --no-fund
 echo "Setup complete. In each terminal: source scripts/deploy/env.sh"

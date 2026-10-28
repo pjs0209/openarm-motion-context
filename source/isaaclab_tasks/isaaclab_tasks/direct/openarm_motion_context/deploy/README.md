@@ -30,6 +30,15 @@ the historical Isaac Lab submodule is not initialized. Use `--robot-only` for
 controller checks without cameras. Motor/CAN configuration, camera serials,
 measured calibration and a compatible trained checkpoint remain robot-specific.
 
+## Browser 3D monitor
+
+The [dashboard guide](../../../../../../scripts/deploy/dashboard/README.md)
+describes the local browser monitor for measured/target robot poses,
+box/ball/peg/hole estimates, grasp targets, joint errors and observation health.
+It runs alongside the ROS bridge, and can be previewed with explicit synthetic
+data using `--demo`. Ball/Peg/Hole display inputs do not add real perception or
+extend the Lift policy adapter.
+
 ## Export and validate a checkpoint
 
 ```bash

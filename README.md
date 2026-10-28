@@ -10,7 +10,8 @@ six populated values, with one policy tick of communication delay.
 Use **Ubuntu 22.04, ROS 2 Humble and system Python 3.10** for deployment.
 Isaac Lab and a GPU are not required on the robot computer. Install ROS Humble
 using the [official instructions](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)
-and install [uv](https://docs.astral.sh/uv/getting-started/installation/).
+and install [uv](https://docs.astral.sh/uv/getting-started/installation/) plus
+Node.js 18+ with npm for the local browser dashboard.
 Then install the build tools:
 
 ```bash
@@ -38,6 +39,25 @@ For robot controllers without cameras, use `bash scripts/deploy/setup.sh --robot
 Use `--skip-rosdep` only when the required system dependencies are already installed.
 After pulling updates, rerun setup to update submodules and rebuild. Source
 `scripts/deploy/env.sh` in every new terminal from this repository's root.
+
+## Browser 3D dashboard
+
+The included [local dashboard](scripts/deploy/dashboard/README.md) displays
+measured and target robot meshes, box/ball/peg/hole poses, grasp targets,
+per-camera freshness and per-joint errors. After setup:
+
+```bash
+source scripts/deploy/env.sh
+uv run --no-project --python .venv-openarm-deploy/bin/python python \
+  scripts/deploy/openarm_scene.py \
+  --config source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real.yaml
+```
+
+Open **http://127.0.0.1:8765**. Add `--demo` for a clearly labelled synthetic
+preview without connecting to ROS or motors. For live policies, use the exported
+deployment YAML as `--config`. The monitor observes the existing ROS graph and
+provides no motor-control buttons or HTTP command endpoint. Box poses come from
+the Lift bridge; real ball/peg/hole poses need separate perception adapters.
 
 ## Check robot controllers
 
