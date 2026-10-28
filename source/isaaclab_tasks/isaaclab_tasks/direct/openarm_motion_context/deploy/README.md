@@ -16,7 +16,8 @@ manipulation policy.
 
 Use Ubuntu 22.04, ROS Humble and system Python 3.10 for deployment. The
 [repository quick start](../../../../../../README.md) covers prerequisites and
-clone instructions. From the repository root:
+clone instructions. Isaac Lab training uses a separate Python 3.12 environment.
+From the standalone repository root:
 
 ```bash
 bash scripts/deploy/setup.sh
@@ -25,10 +26,16 @@ source scripts/deploy/env.sh
 
 Setup builds the pinned OpenArm V1.0 bringup, hardware/CAN library and robot
 description, plus RealSense and AprilTag sources, into `.openarm-ros`. It also
-creates `.venv-openarm-deploy`. The deployment computer does not need Isaac Lab;
-the historical Isaac Lab submodule is not initialized. Use `--robot-only` for
-controller checks without cameras. Motor/CAN configuration, camera serials,
-measured calibration and a compatible trained checkpoint remain robot-specific.
+creates `.venv-openarm-deploy`. The deployment computer does not need Isaac Lab.
+Use `--robot-only` for controller checks without cameras. Motor/CAN configuration,
+camera serials, measured calibration and a compatible checkpoint remain
+robot-specific. Use a ROS distribution and Python ABI that match.
+
+A fresh clone still needs a trained Lift checkpoint with its run's `params`
+directory, measured camera/tag and hand-eye calibration, connected OpenArm V1.0
+hardware, and configured `can0`/`can1`. The template configuration defaults to
+dry-run. Export the checkpoint below, verify live state and TF, then use the
+explicit `--publish` option to send commands.
 
 ## Browser 3D monitor
 
@@ -100,6 +107,12 @@ to `finger_joint1`; the second finger follows its mimic mechanism. This removes
 the old two-point, 80-150 ms trajectory delay. Joint-trajectory arm transport is
 still available if its matching controller and topics are selected.
 
+The exported checkpoint contract also restores `gripper_target_speed_limit`.
+A positive value advances the gripper reference at that speed once per policy
+tick; zero retains historical step commands. The reference restarts at the
+open target with the existing grace period after a control gap. This bounds
+command speed, not contact-induced motion or hardware tracking error.
+
 Before policy control, use `deploy/task_start.py --config /path/to/lift.yaml`
 to validate the measured state. Add `--execute` for its eight-second smooth
 move to the checkpoint's start pose. Then run `deploy/deploy_node.py --config
@@ -128,10 +141,13 @@ and less than **1e-6 degrees** in orientation. The residual is a shoulder-origin
 offset of +/-1 mm sideways and 1 mm vertically. This is not a measured robot
 calibration or a full-workspace accuracy certification.
 
-Simulation uses higher position gains and disabled robot gravity. Upstream V1
-motor gains differ and the inspected hardware write path does not reproduce that
-idealized gravity setting. Identify real tracking/gravity compensation before
-claiming sim-to-real task success; do not blindly copy simulated gains to motors.
+Historical simulation profiles used high position gains and disabled robot
+gravity. Current research profiles also record explicit Newton gravity
+compensation; inspect the saved checkpoint contract rather than assuming one
+gravity setting for every policy. Upstream V1 motor gains differ, and the hardware
+write path does not establish equivalent tracking or compensation. Identify
+those real properties before claiming sim-to-real task success; do not blindly
+copy simulated gains to motors.
 No real lift success or hardware deployment performance is claimed here.
 
 This adapter currently accepts **Lift Trend** checkpoints. WithBall additionally

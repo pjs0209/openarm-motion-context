@@ -49,6 +49,7 @@ def restore_training_contract(config: dict) -> dict:
         "reset_grace_steps",
     ):
         action[key] = env[key]
+    action["gripper_target_speed_limit"] = env.get("gripper_target_speed_limit", 0.0)
     action["command_time_from_start"] = 1.0 / cfg["control_rate_hz"]
     comm = cfg.setdefault("communication", {})
     comm["mode"] = env["communication_mode"]
@@ -89,6 +90,7 @@ def restore_training_contract(config: dict) -> dict:
         "action_update": "once_per_policy_step",
         "partner_message_delay_steps": 1,
         "robot_gravity_disabled": env["scene"]["robot"]["spawn"]["rigid_props"]["disable_gravity"],
+        "newton_gravity_compensation": env["scene"]["robot"]["spawn"].get("newton_gravity_compensation", 0.0),
         "actuators": env["scene"]["robot"]["actuators"],
     }
     return cfg

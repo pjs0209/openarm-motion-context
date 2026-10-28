@@ -14,6 +14,8 @@ from pathlib import Path
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
+from isaaclab.utils import configclass
+from .newton_assets import spawn_openarm_robot
 
 
 def _resolve_openarm_asset_dirs() -> tuple[str, str, str, str]:
@@ -126,13 +128,23 @@ _START_POSE_DEG = {
 _START_POSE = {
     # arm joint는 읽기 쉽게 degree로 적은 뒤 radian으로 변환한다.
     # finger joint 값은 USD joint position에서 쓰는 단위 그대로 둔다.
-    key: value if "finger" in key else math.radians(value) for key, value in _START_POSE_DEG.items()
+    key: value if "finger" in key else math.radians(value)
+    for key, value in _START_POSE_DEG.items()
 }
+
+
+@configclass
+class OpenArmRobotUsdCfg(sim_utils.UsdFileCfg):
+    """Record MJWarp compensation explicitly; its importer does not exclude body gravity."""
+
+    newton_gravity_compensation: float = 0.0
+
 
 OPEN_ARM_CFG = ArticulationCfg(
     # USD asset이 link/joint name의 source of truth다. task logic은 이 이름으로
     # left/right arm과 finger state를 slicing한다.
-    spawn=sim_utils.UsdFileCfg(
+    spawn=OpenArmRobotUsdCfg(
+        func=spawn_openarm_robot,
         usd_path=os.path.join(OPENARM_ROBOT_ASSET_DIR, "openarm_robot_with_camera.usda"),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -239,6 +251,7 @@ simulation에서 더 강한 position tracking이 유리하다. 이 copy는 joint
 그대로 유지하고 gravity/gain만 안정적인 control 쪽으로 바꾼다.
 """
 OPEN_ARM_HIGH_PD_CFG.spawn.rigid_props.disable_gravity = True
+OPEN_ARM_HIGH_PD_CFG.spawn.newton_gravity_compensation = 1.0
 OPEN_ARM_HIGH_PD_CFG.actuators["openarm_arm"].stiffness = {
     "openarm_left_joint[1-2]": 400.0,
     "openarm_right_joint[1-2]": 400.0,

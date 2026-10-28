@@ -17,17 +17,32 @@
 
 import argparse
 import importlib
+import json
 import os
 import random
 import re
 import sys
 import time
+from pathlib import Path
 
-from isaaclab.app import AppLauncher
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+_legacy_rl = Path(__file__).resolve().parents[3] / "compat" / "skrl_1_4_3"
+if not (_legacy_rl / "skrl").is_dir():
+    raise RuntimeError(
+        "Pinned OpenArm RL runtime is missing; do not silently substitute skrl2 for old MAPPO checkpoints"
+    )
+sys.path.insert(0, str(_legacy_rl))
+
+from isaaclab.app import add_launcher_args, launch_simulation
 
 
 # Isaac Lab은 대부분의 Isaac/Omni import보다 AppLauncher argument parsing이 먼저
 # 끝나야 한다. 그래서 parser는 파일 상단에 둔다.
+if "--headless" in sys.argv:
+    sys.argv.remove("--headless")
+    sys.argv.extend(["--viz", "none"])
+sys.argv = [arg for arg in sys.argv if arg != "--enable_cameras"]
+
 parser = argparse.ArgumentParser(description="Train OpenArm bimanual direct latent-interaction-intent MAPPO.")
 parser.add_argument("--mode", type=str, default="intent_share", choices=("intent_share", "no_share"))
 parser.add_argument("--video", action="store_true", default=False, help="Record training videos.")
@@ -43,11 +58,31 @@ parser.add_argument(
 )
 parser.add_argument("--seed", type=int, default=None, help="Seed used for training.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to checkpoint to resume from.")
-parser.add_argument("--intent_head_checkpoint", type=str, default=None, help="Path to latent-interaction-intent module weights.")
-parser.add_argument("--freeze_intent_head", action="store_true", default=False, help="Freeze loaded latent-interaction-intent modules.")
-parser.add_argument("--disable_online_intent_loss", action="store_true", default=False, help="Disable online timing-intent loss.")
+parser.add_argument(
+    "--resume_run_dir",
+    type=str,
+    default=None,
+    help="Continue an interrupted run in its existing directory using --checkpoint agent_STEP.pt.",
+)
+parser.add_argument(
+    "--policy_warmstart",
+    type=str,
+    default=None,
+    help="Copy a Lift actor and actor scaler into WithBall; keep critic and optimizer fresh.",
+)
+parser.add_argument(
+    "--intent_head_checkpoint", type=str, default=None, help="Path to latent-interaction-intent module weights."
+)
+parser.add_argument(
+    "--freeze_intent_head", action="store_true", default=False, help="Freeze loaded latent-interaction-intent modules."
+)
+parser.add_argument(
+    "--disable_online_intent_loss", action="store_true", default=False, help="Disable online timing-intent loss."
+)
 parser.add_argument("--max_iterations", type=int, default=None, help="Override max training iterations.")
-parser.add_argument("--mode_loss_warmup_timesteps", type=int, default=None, help="Override MotionModeIntent mode loss warmup steps.")
+parser.add_argument(
+    "--mode_loss_warmup_timesteps", type=int, default=None, help="Override MotionModeIntent mode loss warmup steps."
+)
 parser.add_argument("--stable_hold_reward_scale", type=float, default=None)
 parser.add_argument("--stable_hold_tilt_deg", type=float, default=None)
 parser.add_argument("--stable_hold_height_margin", type=float, default=None, help=argparse.SUPPRESS)
@@ -67,14 +102,13 @@ parser.add_argument(
     help="share_intent architecture. Only shared_intent_encoder is supported.",
 )
 parser.add_argument("--experiment_tag", type=str, default=None, help="Optional experiment-name tag.")
-AppLauncher.add_app_launcher_args(parser)
+add_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 if args_cli.video:
     args_cli.enable_cameras = True
 
 sys.argv = [sys.argv[0]] + hydra_args
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
+
 
 import gymnasium as gym
 
@@ -83,7 +117,11 @@ from isaaclab.utils.io import dump_yaml
 from isaaclab_rl.skrl import SkrlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils.hydra import hydra_task_config
+from isaaclab_tasks.direct.openarm_motion_context.train.trainer import MotionContextTrainer as IntentSequentialTrainer
+from isaaclab_tasks.direct.openarm_motion_context.models.actor import (
+    build_motion_context_mappo_agent as build_intent_mappo_agent,
+)
+from isaaclab_tasks.utils.hydra import resolve_task_config
 
 
 def _unwrap_task_env(env):
@@ -169,15 +207,16 @@ def _load_symbol(path: str):
 
 
 def _runtime_components(agent_cfg: dict):
-    """Load the motion-context agent and trainer declared by the task YAML."""
+    """YAML에서 agent builder와 trainer class를 가져오고, 없으면 legacy 기본값을 쓴다."""
 
     runtime_cfg = agent_cfg.get("runtime", {}) if isinstance(agent_cfg, dict) else {}
-    try:
-        builder_path = runtime_cfg["agent_builder"]
-        trainer_path = runtime_cfg["trainer"]
-    except KeyError as exc:
-        raise ValueError("Motion-context agent YAML requires runtime.agent_builder and runtime.trainer") from exc
-    return _load_symbol(builder_path), _load_symbol(trainer_path)
+    builder = build_intent_mappo_agent
+    trainer_cls = IntentSequentialTrainer
+    if runtime_cfg.get("agent_builder"):
+        builder = _load_symbol(runtime_cfg["agent_builder"])
+    if runtime_cfg.get("trainer"):
+        trainer_cls = _load_symbol(runtime_cfg["trainer"])
+    return builder, trainer_cls
 
 
 def _next_experiment_index(log_root_path: str) -> int:
@@ -238,10 +277,13 @@ def _apply_compact_motion_mode_cfg(agent_cfg: dict, env_cfg=None) -> None:
             trainer_section["mode_share_confidence_threshold"] = mode_cfg["share_confidence_threshold"]
 
 
-@hydra_task_config(args_cli.task, "skrl_mappo_cfg_entry_point")
 def main(env_cfg, agent_cfg):
     """env_cfg/agent_cfg가 로드된 뒤 Hydra가 호출하는 main entry point."""
 
+    if args_cli.policy_warmstart and (args_cli.checkpoint or args_cli.resume_run_dir):
+        raise ValueError("Policy warm-start cannot be combined with checkpoint resume")
+    if args_cli.policy_warmstart and args_cli.task != "Isaac-OpenArm-LiftWithBall-v0":
+        raise ValueError("Lift actor warm-start is currently restricted to WithBall")
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
     if hasattr(env_cfg, "sharing_mode"):
@@ -284,6 +326,12 @@ def main(env_cfg, agent_cfg):
         agent_cfg["agent"]["mode_loss_warmup_timesteps"] = args_cli.mode_loss_warmup_timesteps
     if hasattr(env_cfg, "__post_init__"):
         env_cfg.__post_init__()
+    # Keep the archived agent configuration consistent with the actual runtime actor.
+    # The actor reads this mode from task_env, while Hydra overrides only env_cfg.
+    if hasattr(env_cfg, "communication_mode"):
+        agent_cfg.setdefault("models", {}).setdefault("policy", {})["communication_mode"] = str(
+            env_cfg.communication_mode
+        )
     if args_cli.disable_online_intent_loss or args_cli.freeze_intent_head:
         if "intent_loss_scale" in agent_cfg["agent"]:
             agent_cfg["agent"]["intent_loss_scale"] = 0.0
@@ -294,56 +342,115 @@ def main(env_cfg, agent_cfg):
 
     # run directory는 증가 index를 사용한다. 기본적으로 train/play/analysis output이
     # 이전 실험을 덮어쓰지 않게 하기 위함이다.
-    log_root_path = os.path.abspath(os.path.join("logs", "skrl", agent_cfg["agent"]["experiment"]["directory"]))
-    run_index = _next_experiment_index(log_root_path)
-    log_suffix = args_cli.experiment_tag if args_cli.experiment_tag else args_cli.mode
-    log_name = f"{run_index:03d}_{log_suffix}"
+    log_root_path = os.path.abspath(
+        os.path.join("logs", "current", "skrl", agent_cfg["agent"]["experiment"]["directory"])
+    )
+    resume_step = None
+    if args_cli.resume_run_dir:
+        log_dir = os.path.realpath(args_cli.resume_run_dir)
+        checkpoint = os.path.realpath(args_cli.checkpoint or "")
+        match = re.fullmatch(r"agent_(\d+)\.pt", os.path.basename(checkpoint))
+        if (
+            os.path.dirname(log_dir) != os.path.realpath(log_root_path)
+            or os.path.dirname(checkpoint) != os.path.join(log_dir, "checkpoints")
+            or not os.path.isfile(checkpoint)
+            or match is None
+        ):
+            raise ValueError("Resume requires an existing run and its agent_STEP.pt checkpoint")
+        resume_step = int(match.group(1))
+        if not 0 < resume_step < int(agent_cfg["trainer"]["timesteps"]):
+            raise ValueError("Resume checkpoint must precede the planned final timestep")
+        if os.path.exists(os.path.join(log_dir, "checkpoints", f"agent_{agent_cfg['trainer']['timesteps']}.pt")):
+            raise ValueError("Run already has its final checkpoint")
+        log_name = os.path.basename(log_dir)
+    else:
+        run_index = _next_experiment_index(log_root_path)
+        log_suffix = args_cli.experiment_tag if args_cli.experiment_tag else args_cli.mode
+        log_name = f"{run_index:03d}_{log_suffix}"
     agent_cfg["agent"]["experiment"]["directory"] = log_root_path
     agent_cfg["agent"]["experiment"]["experiment_name"] = log_name
     log_dir = os.path.join(log_root_path, log_name)
 
-    dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
-    dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    if resume_step is None:
+        dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
+        dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    else:
+        # Preserve the original configs and reject changed training settings.
+        import yaml
+
+        resume_params = os.path.join(log_dir, "params", f"resume_{resume_step}_{time.time_ns()}")
+        dump_yaml(os.path.join(resume_params, "env.yaml"), env_cfg)
+        dump_yaml(os.path.join(resume_params, "agent.yaml"), agent_cfg)
+        for config_name in ("env.yaml", "agent.yaml"):
+            with open(os.path.join(log_dir, "params", config_name)) as stream:
+                original = yaml.load(stream, Loader=yaml.FullLoader)
+            with open(os.path.join(resume_params, config_name)) as stream:
+                resumed = yaml.load(stream, Loader=yaml.FullLoader)
+            if original != resumed:
+                raise ValueError(f"Resume configuration differs from saved {config_name}")
+        with open(os.path.join(resume_params, "recovery.json"), "w") as stream:
+            json.dump(
+                {
+                    "checkpoint": checkpoint,
+                    "initial_timestep": resume_step,
+                    "final_timestep": agent_cfg["trainer"]["timesteps"],
+                    "physics_and_rng_restored": False,
+                    "scheduler_state_restored": False,
+                },
+                stream,
+                indent=2,
+            )
+        print(f"[INFO] Recovering interrupted run at {resume_step} steps; simulator/RNG and scheduler restart")
     env_cfg.log_dir = log_dir
 
     # Isaac Lab env를 만들고, 필요하면 video wrapper를 붙인 뒤 skrl multi-agent API로 감싼다.
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
-    if args_cli.video:
-        env = gym.wrappers.RecordVideo(
-            env,
-            video_folder=os.path.join(log_dir, "videos", "train"),
-            step_trigger=lambda step: step % args_cli.video_interval == 0,
-            video_length=args_cli.video_length,
-            disable_logger=True,
-        )
+    with launch_simulation(env_cfg, args_cli):
+        env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        if args_cli.video:
+            env = gym.wrappers.RecordVideo(
+                env,
+                video_folder=os.path.join(log_dir, "videos", "train"),
+                step_trigger=lambda step: step % args_cli.video_interval == 0,
+                video_length=args_cli.video_length,
+                disable_logger=True,
+            )
 
-    task_env = _unwrap_task_env(env)
-    if not hasattr(task_env, "possible_agents"):
-        raise RuntimeError("Failed to unwrap multi-agent task env.")
-    env = SkrlVecEnvWrapper(env, ml_framework="torch", wrapper="isaaclab-multi-agent")
-    env = _attach_multi_agent_api(env, task_env)
-    # runtime block 덕분에 같은 script로 legacy intent component와 최종 MotionMode
-    # model/trainer를 모두 구성할 수 있다.
-    agent_builder, trainer_cls = _runtime_components(agent_cfg)
-    agent = agent_builder(env, agent_cfg)
-    trainer = trainer_cls(env=env, agents=agent, cfg=agent_cfg["trainer"])
+        task_env = _unwrap_task_env(env)
+        if not hasattr(task_env, "possible_agents"):
+            raise RuntimeError("Failed to unwrap multi-agent task env.")
+        env = SkrlVecEnvWrapper(env, ml_framework="torch", wrapper="isaaclab-multi-agent")
+        env = _attach_multi_agent_api(env, task_env)
+        # runtime block 덕분에 같은 script로 legacy intent component와 최종 MotionMode
+        # model/trainer를 모두 구성할 수 있다.
+        agent_builder, trainer_cls = _runtime_components(agent_cfg)
+        agent = agent_builder(env, agent_cfg)
+        trainer = trainer_cls(env=env, agents=agent, cfg=agent_cfg["trainer"])
+        if resume_step is not None:
+            trainer.initial_timestep = resume_step
 
-    if args_cli.checkpoint:
-        agent.load(retrieve_file_path(args_cli.checkpoint))
-    if args_cli.intent_head_checkpoint:
-        intent_path = retrieve_file_path(args_cli.intent_head_checkpoint)
-        agent.load_intent_heads(intent_path)
-        print(f"[INFO] Loaded offline latent-interaction-intent modules from: {intent_path}")
-    if args_cli.freeze_intent_head:
-        agent.freeze_intent_heads()
-        print("[INFO] Frozen latent-interaction-intent module weights")
+        if args_cli.checkpoint:
+            agent.load(retrieve_file_path(args_cli.checkpoint))
+        if args_cli.policy_warmstart:
+            from isaaclab_tasks.direct.openarm_motion_context.models.policy_transfer import initialize_from_lift
 
-    start_time = time.time()
-    trainer.train()
-    print(f"Training time: {round(time.time() - start_time, 2)} seconds")
-    env.close()
+            manifest = initialize_from_lift(agent, retrieve_file_path(args_cli.policy_warmstart))
+            trainer.policy_warmstart_manifest = manifest
+            with open(os.path.join(log_dir, "params", "policy_warmstart.json"), "x") as stream:
+                json.dump(manifest, stream, indent=2)
+            print(f"[INFO] Actor warm-start from {manifest['source_checkpoint']}; critic and optimizer are fresh")
+        if args_cli.intent_head_checkpoint:
+            intent_path = retrieve_file_path(args_cli.intent_head_checkpoint)
+            agent.load_intent_heads(intent_path)
+            print(f"[INFO] Loaded offline latent-interaction-intent modules from: {intent_path}")
+        if args_cli.freeze_intent_head:
+            agent.freeze_intent_heads()
+            print("[INFO] Frozen latent-interaction-intent module weights")
+
+        start_time = time.time()
+        trainer.train()
+        print(f"Training time: {round(time.time() - start_time, 2)} seconds")
+        env.close()
 
 
 if __name__ == "__main__":
-    main()
-    simulation_app.close()
+    main(*resolve_task_config(args_cli.task, "skrl_mappo_cfg_entry_point"))

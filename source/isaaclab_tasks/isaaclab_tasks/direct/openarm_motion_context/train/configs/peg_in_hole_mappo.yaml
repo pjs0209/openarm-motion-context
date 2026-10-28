@@ -12,7 +12,8 @@ models:
   policy:
     communication_mode: motion_context
     class: GaussianMixin
-    clip_actions: True
+    # PPO scores latent Gaussian samples; the environment clips execution.
+    clip_actions: False
     clip_log_std: True
     min_log_std: -20.0
     max_log_std: 2.0
@@ -78,11 +79,11 @@ agent:
 
 trainer:
   class: SequentialTrainer
-  timesteps: 240000
+  timesteps: 60000
   environment_info: log
   debug_interval: 500
   save_mode_trace: False
-  mode_trace_dir: "logs/motion_context_traces"
+  mode_trace_dir: "logs/current/motion_context_traces"
   mode_trace_env_index: 0
   mode_trace_format: "json"
   num_trace_episodes: 50

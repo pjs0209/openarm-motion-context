@@ -1,1 +1,1 @@
-* Add pinned OpenArm description and AprilTag message sources, ROS workspace setup, and V1 robot/camera bringup.
+* Fix CPU deployment dependency resolution and document the standalone OpenArm ROS setup.

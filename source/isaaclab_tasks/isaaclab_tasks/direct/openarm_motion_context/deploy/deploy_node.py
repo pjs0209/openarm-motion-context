@@ -830,6 +830,15 @@ class OpenArmPaperReLiftDeployNode:
             if state.gripper_closed
             else float(action_cfg.get("gripper_open_target", 0.04))
         )
+        if state.gripper_position_command is None:
+            state.gripper_position_command = float(action_cfg.get("gripper_open_target", 0.04))
+        max_grip_delta = float(action_cfg.get("gripper_target_speed_limit", 0.0)) * self.dt
+        if max_grip_delta > 0.0:
+            grip_target = max(
+                state.gripper_position_command - max_grip_delta,
+                min(state.gripper_position_command + max_grip_delta, grip_target),
+            )
+        state.gripper_position_command = grip_target
         state.prev_action = action.detach().clone()
         gripper_joints = self.left_gripper_joints if agent == "left_arm" else self.right_gripper_joints
         return state.q_target, torch.full((len(gripper_joints),), grip_target, dtype=torch.float32, device=self.device)

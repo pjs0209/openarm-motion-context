@@ -5,6 +5,8 @@ COMMUNICATION_MESSAGE_DIMS = {
     "motion_only": 3,
     "context_only": 3,
     "motion_context": 6,
+    "motion_context_la": 6,
+    "motion_context_s": 6,
     "previous_action": 8,
     "full_partner_observation": 30,
 }
