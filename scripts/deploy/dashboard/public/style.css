@@ -1123,3 +1123,14 @@ td:last-child {
 .stream-offline .arm-tables {
   opacity: 0.4;
 }
+
+.usd-source {
+  margin: 8px 16px;
+  color: var(--text-muted, #91a8b5);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.usd-source div {
+  margin-bottom: 5px;
+}

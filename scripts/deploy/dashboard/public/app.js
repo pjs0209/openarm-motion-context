@@ -28,6 +28,7 @@ const layers = {
   hole: true,
   axes: true,
   grid: true,
+  reference: true,
 };
 const viewport = $("viewport");
 const scene = new THREE.Scene();
@@ -95,6 +96,10 @@ const objectFrame = new THREE.Group();
 objectFrame.matrixAutoUpdate = false;
 objectFrame.add(objectsRoot, graspRoot);
 scene.add(objectFrame);
+const referenceRoot = new THREE.Group();
+scene.add(referenceRoot);
+const referenceGroups = {};
+let usdScene = null;
 const objectGroups = {};
 const graspGroups = {};
 const arrows = {};
@@ -227,8 +232,46 @@ async function loadRobot() {
   }
 }
 
-function objectMesh(name, data) {
-  const size = data.size;
+async function loadUsdScene() {
+  try {
+    const response = await fetch("/api/usd-scene", { cache: "no-store" });
+    if (!response.ok) throw new Error(`USD scene HTTP ${response.status}`);
+    usdScene = await response.json();
+    if (!usdScene) return;
+    $("usd-source").textContent =
+      `${usdScene.source} · ${usdScene.frame} · STATIC REFERENCE`;
+    for (const [name, object] of Object.entries(usdScene.objects)) {
+      if (!names.includes(name)) continue;
+      const group = objectMesh(name, { size: [0.1, 0.1, 0.1] }, true);
+      referenceRoot.add(group);
+      referenceGroups[name] = group;
+      poseGroup(group, object.pose);
+      const row = document.createElement("div");
+      row.textContent = `${name}: ${object.pose.position.map((v) => v.toFixed(3)).join(" / ")} m`;
+      row.title = object.prim;
+      $("usd-positions").append(row);
+      // A scene can arrive after the first ROS snapshot and proxy creation.
+      const old = objectGroups[name];
+      if (old) {
+        old.removeFromParent();
+        old.traverse((part) => {
+          part.geometry?.dispose();
+          if (part.material) part.material.dispose();
+          if (part.isCSS2DObject) part.element.remove();
+        });
+        delete objectGroups[name];
+      }
+    }
+    applyLayers();
+    if (latest) update(latest);
+  } catch (error) {
+    $("usd-source").textContent = `USD unavailable: ${error.message}`;
+    console.error(error);
+  }
+}
+
+function objectMesh(name, data, reference = false) {
+  const size = [...data.size];
   let geometry;
   if (data.shape === "sphere")
     geometry = new THREE.SphereGeometry(size[0] / 2, 32, 20);
@@ -260,20 +303,60 @@ function objectMesh(name, data) {
     }),
   );
   mesh.castShadow = true;
-  group.add(mesh);
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry, 30),
-    new THREE.LineBasicMaterial({
-      color: colors[name],
-      transparent: true,
-      opacity: 0.75,
-    }),
-  );
-  group.add(edges);
+  const usd = usdScene?.objects[name];
+  if (usd) {
+    geometry.dispose();
+    mesh.material.dispose();
+    for (const shape of usd.shapes) {
+      let actual;
+      if (shape.type === "mesh") {
+        actual = new THREE.BufferGeometry();
+        actual.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(shape.positions, 3),
+        );
+        actual.setIndex(shape.indices);
+        actual.computeVertexNormals();
+      } else if (shape.type === "sphere") {
+        actual = new THREE.SphereGeometry(shape.radius, 32, 20);
+        actual.applyMatrix4(new THREE.Matrix4().fromArray(shape.matrix));
+      } else throw new Error(`Unsupported USD shape ${shape.type}`);
+      const part = new THREE.Mesh(
+        actual,
+        new THREE.MeshStandardMaterial({
+          color: colors[name],
+          roughness: 0.65,
+          metalness: 0.1,
+          side: THREE.DoubleSide,
+          transparent: reference,
+          opacity: reference ? 0.3 : 0.9,
+          depthWrite: !reference,
+        }),
+      );
+      part.castShadow = !reference;
+      group.add(part);
+    }
+    const bounds = new THREE.Box3().setFromObject(group);
+    size[2] = bounds.max.z * 2;
+  } else group.add(mesh);
+  if (!usd) {
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geometry, 30),
+      new THREE.LineBasicMaterial({
+        color: colors[name],
+        transparent: true,
+        opacity: 0.75,
+      }),
+    );
+    group.add(edges);
+  }
   const label = document.createElement("div");
   label.className = "object-label";
   label.style.setProperty("--object-color", colors[name]);
-  label.textContent = name[0].toUpperCase() + name.slice(1);
+  label.textContent =
+    name[0].toUpperCase() +
+    name.slice(1) +
+    (reference ? " · USD reference" : "");
   const labelObject = new CSS2DObject(label);
   labelObject.position.z = size[2] / 2 + 0.045;
   group.add(labelObject);
@@ -303,6 +386,9 @@ function setMeasuredOpacity(opacity) {
 
 function applyLayers() {
   grid.visible = layers.grid;
+  referenceRoot.visible = layers.reference;
+  for (const [name, group] of Object.entries(referenceGroups))
+    group.visible = layers[name];
   originAxes.visible = layers.axes;
   for (const axes of robotAxes) axes.visible = layers.axes;
   const measured = latest?.robot?.measured;
@@ -438,6 +524,15 @@ function update(data) {
     : "TARGET OFFSET";
   $("base-frame").textContent = data.base_frame;
   $("object-frame").textContent = data.base_frame;
+  if (usdScene) {
+    const registered = usdScene.frame === data.base_frame;
+    if (registered && referenceRoot.parent !== objectFrame)
+      objectFrame.add(referenceRoot);
+    else if (!registered && referenceRoot.parent !== scene)
+      scene.add(referenceRoot);
+    $("usd-source").textContent =
+      `${usdScene.source} · ${usdScene.frame} · STATIC REFERENCE${registered ? "" : " · not registered to robot"}`;
+  }
   $("control-hz").textContent = data.control_rate_hz;
   $("object-count").textContent = names.filter(
     (name) => data.objects[name]?.state === "LIVE",
@@ -615,6 +710,8 @@ $("fit-view").addEventListener("click", () => {
   const box = new THREE.Box3().setFromObject(measuredRobot);
   const objectBox = new THREE.Box3().setFromObject(objectsRoot);
   if (!objectBox.isEmpty()) box.union(objectBox);
+  const referenceBox = new THREE.Box3().setFromObject(referenceRoot);
+  if (!referenceBox.isEmpty()) box.union(referenceBox);
   const sphere = box.getBoundingSphere(new THREE.Sphere());
   if (!Number.isFinite(sphere.radius) || sphere.radius === 0) return;
   const direction = camera.position.clone().sub(controls.target).normalize();
@@ -649,4 +746,5 @@ function animate() {
 resize();
 animate();
 loadRobot();
+loadUsdScene();
 poll();
