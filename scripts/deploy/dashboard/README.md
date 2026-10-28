@@ -102,6 +102,71 @@ The primitive dimensions are not used by inference or safety checks. A live
 object marker, a small joint error, or a green heartbeat is not evidence of a
 successful physical manipulation task.
 
+## USD geometry and authored layout
+
+Export a task scene once on the training computer with its USD Python (`pxr`)
+installed. The browser uses the exported geometry; the deployment computer does
+not need USD or Isaac Sim. The output includes actual mesh vertices/triangles,
+sphere radii and each object's authored pose, in metres with Z up. Materials
+use the dashboard's object colors; textures and physics are not exported.
+Only visible meshes (triangles/convex quads) and spheres are supported; unsupported
+geometry fails export rather than silently replacing it with a proxy.
+
+For the Lift WithBall scene in the IsaacLab source checkout:
+
+```bash
+uv run python scripts/deploy/export_usd_scene.py \
+  --usd source/isaaclab_assets/data/Environments/OpenArm/lift/openarm_env_box_with_ball.usd \
+  --object box=/World/Environment/box --object ball=/World/Environment/Ball \
+  --output deployment/lift-scene.json
+```
+
+For the circle Peg scene:
+
+```bash
+uv run python scripts/deploy/export_usd_scene.py \
+  --usd source/isaaclab_assets/data/Environments/OpenArm/peg_in_hole/openarm_env_peg_in_hole_circle.usd \
+  --object peg=/World/Environment/circle_peg --object hole=/World/Environment/circle_hole \
+  --output deployment/circle-scene.json
+```
+
+Arrow and hexagon variants use their corresponding USD and prim names. Each
+export describes one source scene; unrelated task layouts are not merged.
+Copy the JSON to the deployment computer and add it to the dashboard command:
+
+```bash
+uv run --no-project --python .venv-openarm-deploy/bin/python python \
+  scripts/deploy/openarm_scene.py \
+  --config source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real.yaml \
+  --usd-scene deployment/lift-scene.json
+```
+
+The **USD reference** layer shows static translucent geometry, labels and authored
+coordinates independently of the live stream. It remains a reference when ROS
+is disconnected. The live object cards continue to show only measured poses;
+missing measurements stay `NO DATA`. When a measured pose is available, its
+solid marker uses the same USD geometry, with the supplied pose referring to
+that exported **object root prim**, not its visual center or a child grasp frame.
+Objects absent from the export keep their configured primitive proxies.
+
+The default reference frame is `usd_world`, explicitly **not registered to robot**.
+Its numerical origin is displayed in the scene's world; apparent overlap with
+the robot does not establish calibration. To express the reference in a robot
+frame, author a rigid base prim in the USD at the calibrated robot base and export
+with both `--base-prim /World/RobotBase` and
+`--frame openarm_body_link0`. The UI attaches a reference to the robot only when
+its frame matches the dashboard base frame. Otherwise it stays in USD world.
+
+USD default-time poses are not task reset randomization, a running simulation's
+current poses, or the physical objects' current poses. Changing objects in the
+real scene still requires measured ROS poses. Exporting geometry does not add
+WithBall/Peg policy support. `--demo` still uses synthetic current poses, even
+when its geometry comes from USD.
+
+Exports are local deployment artifacts (the `deployment/` directory is ignored
+in the standalone repository). Keep original asset licenses when sharing them;
+NVIDIA-referenced scene assets are not bundled with this exporter.
+
 ## Dependencies
 
 Three.js (MIT) and urdf-loader (Apache-2.0) are pinned in `package-lock.json`.

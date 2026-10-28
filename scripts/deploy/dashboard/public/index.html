@@ -95,6 +95,13 @@
           ><span>Ground grid</span
           ><input type="checkbox" data-layer="grid" checked
         /></label>
+        <div class="section-label spaced">USD REFERENCE</div>
+        <label class="layer"
+          ><span>Authored layout</span
+          ><input type="checkbox" data-layer="reference" checked
+        /></label>
+        <p id="usd-source" class="usd-source">No USD scene loaded</p>
+        <div id="usd-positions" class="usd-source"></div>
         <div class="sidebar-bottom">
           <span class="tiny-label">OBSERVATION ONLY</span>
           <p>
@@ -222,8 +229,8 @@
               </p>
               <div id="object-cards"></div>
               <p class="proxy-note">
-                Shapes are configurable visual proxies. Pose markers follow
-                measured coordinates.
+                Shapes use the loaded USD geometry or configured proxies. Solid
+                markers follow measured poses; USD references are static.
               </p>
             </section>
             <section class="inspector-section">

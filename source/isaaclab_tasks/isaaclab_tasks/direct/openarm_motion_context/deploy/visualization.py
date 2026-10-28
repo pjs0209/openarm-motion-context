@@ -335,15 +335,20 @@ def demo_snapshot(config, elapsed):
     }
 
 
-def create_server(host, port, state, frontend, model_xml, asset_root):
+def create_server(host, port, state, frontend, model_xml, asset_root, usd_scene=None):
     """Expose only dashboard files, pinned JS modules, and the robot's asset directory."""
     frontend, asset_root = Path(frontend).resolve(), Path(asset_root).resolve()
+
+    scene_bytes = json.dumps(usd_scene, allow_nan=False).encode()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             path = unquote(urlsplit(self.path).path)
             if path == "/api/state":
                 self._send(json.dumps(state.get(), allow_nan=False).encode(), "application/json", False)
+                return
+            if path == "/api/usd-scene":
+                self._send(scene_bytes, "application/json", False)
                 return
             if path == "/api/robot.urdf":
                 self._send(model_xml.encode(), "application/xml", True)
@@ -396,7 +401,13 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--demo", action="store_true", help="Use labelled synthetic data without initializing ROS")
+    parser.add_argument("--usd-scene", type=Path, help="Object geometry/reference layout from export_usd_scene.py")
     args, ros_arguments = parser.parse_known_args()
+    usd_scene = json.loads(args.usd_scene.read_text()) if args.usd_scene else None
+    if usd_scene is not None and (
+        usd_scene.get("schema") != 1 or usd_scene.get("units") != "metres" or usd_scene.get("up_axis") != "Z"
+    ):
+        parser.error("USD scene must be a schema 1, Z-up, metre export")
     config = yaml.safe_load(args.config.read_text())
     root = Path(__file__).resolve().parents[6]
     frontend = root / "scripts/deploy/dashboard"
@@ -409,7 +420,7 @@ def main():
     # colcon symlink installs each asset file individually. Resolve the source
     # model first so mesh files stay inside their actual asset directory.
     asset_root = model.resolve().parents[3]
-    server = create_server(args.host, args.port, state, frontend, xml, asset_root)
+    server = create_server(args.host, args.port, state, frontend, xml, asset_root, usd_scene)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     mode = "DEMO, synthetic data" if args.demo else "ROS monitor"
