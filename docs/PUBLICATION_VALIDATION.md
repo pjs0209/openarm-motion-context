@@ -71,7 +71,8 @@ They predate this source publication; the initial unformatted scan had 266
 findings. Keeping executable code unchanged takes precedence over unsafe cleanup
 while publishing the experimental snapshot. The vendored upstream skrl tree is
 not reformatted or graded as new project-authored code. This is not a clean-lint
-release and must not be described as one; the PR is published as a draft.
+release and must not be described as one. Any publication PR should remain a
+draft until these limitations have been reviewed.
 
 ## Deliberate exclusions and limits
 
