@@ -14,23 +14,21 @@ manipulation policy.
 
 ## Software environment
 
-ROS Humble on this workstation uses Python 3.10. Isaac Lab training uses Python
-3.12 in `env_isaaclab`. Use a separate environment for ROS; do not replace the
-training interpreter. From the repository root:
+Use Ubuntu 22.04, ROS Humble and system Python 3.10 for deployment. The
+[repository quick start](../../../../../../README.md) covers prerequisites and
+clone instructions. From the repository root:
 
 ```bash
-source /opt/ros/humble/setup.bash
-uv venv --python /usr/bin/python3 --system-site-packages .venv-openarm-deploy
-uv pip install --python .venv-openarm-deploy/bin/python \
-  -r source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/requirements.txt
-source ~/openarm_robot_ws/install/setup.bash
+bash scripts/deploy/setup.sh
+source scripts/deploy/env.sh
 ```
 
-The ROS workspace must contain the OpenArm V1.0 bringup, RealSense driver,
-`apriltag_ros`, and `apriltag_msgs`. This workstation additionally has a local
-message-only overlay at `.openarm-ros/install/setup.bash`; it does not install
-the detector or hardware driver. Use a ROS distribution and Python ABI that match
-on other computers.
+Setup builds the pinned OpenArm V1.0 bringup, hardware/CAN library and robot
+description, plus RealSense and AprilTag sources, into `.openarm-ros`. It also
+creates `.venv-openarm-deploy`. The deployment computer does not need Isaac Lab;
+the historical Isaac Lab submodule is not initialized. Use `--robot-only` for
+controller checks without cameras. Motor/CAN configuration, camera serials,
+measured calibration and a compatible trained checkpoint remain robot-specific.
 
 ## Export and validate a checkpoint
 
@@ -71,14 +69,19 @@ sharing one tag TF child between three parents produces ambiguous transforms.
 The included CAD hand-eye transforms are starting values, not measured physical
 calibration. Keep the camera frame names consistent with the RealSense launch.
 
+The included `scripts/deploy/bringup.launch.py` starts all three cameras,
+rectifiers and detectors with matching frames/topics when `start_cameras:=true`.
+Pass the exported `deployment_config` and three distinct serials as shown in
+the repository quick start. It reads detector parameters from the exported
+`<config-stem>_<camera>_apriltag.yaml` files.
+
 ## Robot commands
 
 Use OpenArm **V1.0**, not the upstream launch default V2.0:
 
 ```bash
-ros2 launch openarm_bringup openarm.bimanual.launch.py \
-  arm_type:=openarm_v1.0 use_fake_hardware:=false \
-  robot_controller:=forward_position_controller \
+source scripts/deploy/env.sh
+ros2 launch ./scripts/deploy/bringup.launch.py use_fake_hardware:=false \
   right_can_interface:=can0 left_can_interface:=can1
 ```
 

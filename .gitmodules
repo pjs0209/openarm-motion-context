@@ -14,3 +14,9 @@
 [submodule "third_party/IsaacLab"]
 	path = third_party/IsaacLab
 	url = https://github.com/isaac-sim/IsaacLab.git
+[submodule "third_party/openarm_description"]
+	path = third_party/openarm_description
+	url = https://github.com/enactic/openarm_description.git
+[submodule "third_party/apriltag_msgs"]
+	path = third_party/apriltag_msgs
+	url = https://github.com/christianrauch/apriltag_msgs.git

@@ -1,4 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cpu
+--find-links https://download.pytorch.org/whl/cpu/torch/
 torch==2.11.0+cpu
 skrl==1.4.3
 gymnasium==1.2.0
