@@ -27,3 +27,12 @@ realsense_d435i_color_optical_frame
 .venv-openarm-deploy/
 .openarm-ros/
 deployment/
+
+# Simulation caches and local simulator build output
+.cache/
+*.log
+*.zip
+*.tar.gz
+*.bundle
+assets_local/
+node_modules/

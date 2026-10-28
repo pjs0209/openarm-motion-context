@@ -34,6 +34,10 @@ import os
 import sys
 
 import torch
+
+from ..communication.motion_context import motion_context_layout
+from .action_trace import record_policy_mean_actions
+from .evaluation_state import capture_physical_start
 import tqdm
 
 from skrl.trainers.torch import SequentialTrainer
@@ -62,7 +66,8 @@ def format_motion(motion) -> str:
     """deterministic 3D motion intent를 문자열로 만든다."""
 
     vals = _to_float_list(motion, 3)
-    return f"[mx={vals[0]:+.2f}, my={vals[1]:+.2f}, mz={vals[2]:+.2f}]"
+    norm = math.sqrt(sum(value * value for value in vals))
+    return f"[mx={vals[0]:+.2f}, my={vals[1]:+.2f}, mz={vals[2]:+.2f}; norm={norm:.2f}]"
 
 
 _COMMUNICATION_PAYLOAD_DIMS = {
@@ -70,26 +75,26 @@ _COMMUNICATION_PAYLOAD_DIMS = {
     "motion_only": 3,
     "context_only": 3,
     "motion_context": 6,
+    "motion_context_la": 6,
+    "motion_context_s": 6,
     "previous_action": 8,
     "full_partner_observation": 30,
 }
 
 
-def _communication_layout(mode: str) -> list[str]:
+def _communication_layout(mode: str, representation: str = "trend") -> list[str]:
     """Return the semantic layout of the active (unpadded) payload."""
 
     if mode == "motion_only":
         return ["signed_motion_x", "signed_motion_y", "signed_motion_z"]
     if mode == "context_only":
-        return ["linear_activity", "angular_activity", "action_smoothness"]
-    if mode == "motion_context":
+        return list(motion_context_layout(representation))
+    if mode in ("motion_context", "motion_context_la", "motion_context_s"):
         return [
             "signed_motion_x",
             "signed_motion_y",
             "signed_motion_z",
-            "linear_activity",
-            "angular_activity",
-            "action_smoothness",
+            *motion_context_layout(representation),
         ]
     if mode == "previous_action":
         return [f"previous_action_{index}" for index in range(8)]
@@ -112,7 +117,16 @@ class MotionContextTrainer(SequentialTrainer):
         self.mode_trace_format = str(self.cfg.get("mode_trace_format", "json")).lower()
         self.mode_trace_task = str(self.cfg.get("mode_trace_task", self.cfg.get("task_name", "")))
         self.mode_trace_checkpoint = str(self.cfg.get("mode_trace_checkpoint", self.cfg.get("checkpoint", "")))
+        self.policy_warmstart_manifest = None
+        if self.mode_trace_checkpoint:
+            transfer_manifest = os.path.join(
+                os.path.dirname(os.path.dirname(self.mode_trace_checkpoint)), "params", "policy_warmstart.json"
+            )
+            if os.path.isfile(transfer_manifest):
+                with open(transfer_manifest) as stream:
+                    self.policy_warmstart_manifest = json.load(stream)
         self.num_trace_episodes = int(self.cfg.get("num_trace_episodes", 0))
+        self.diagnostic_mask = str(self.cfg.get("diagnostic_mask", "none"))
         if bool(self.cfg.get("deterministic_eval", False)):
             self.stochastic_evaluation = False
         self._mode_trace_episode_index = 0
@@ -143,6 +157,10 @@ class MotionContextTrainer(SequentialTrainer):
             "right_motion": [],
             "left_message": [],
             "right_message": [],
+            "left_policy_message": [],
+            "left_policy_mean_action": [],
+            "right_policy_mean_action": [],
+            "right_policy_message": [],
             "object_z": [],
             "object_dz": [],
             "tip_dist": [],
@@ -150,6 +168,7 @@ class MotionContextTrainer(SequentialTrainer):
             "axis_alignment": [],
             "insertion_depth": [],
             "target_insertion_depth": [],
+            "shaft_radial_envelope": [],
             "keypoint_dist": [],
             "preinsert_dist": [],
             "insert_pose_dist": [],
@@ -170,12 +189,36 @@ class MotionContextTrainer(SequentialTrainer):
             "right_ee_vel": [],
             "left_motion_context": [],
             "right_motion_context": [],
-            "left_linear_activity": [],
-            "left_angular_activity": [],
+            "left_translation_trend": [],
+            "left_rotation_trend": [],
+            "left_stability_trend": [],
             "left_action_smoothness": [],
-            "right_linear_activity": [],
-            "right_angular_activity": [],
+            "right_translation_trend": [],
+            "right_rotation_trend": [],
+            "right_stability_trend": [],
             "right_action_smoothness": [],
+            "left_linear_speed_raw": [],
+            "left_angular_speed_raw": [],
+            "left_action_variation_raw": [],
+            "left_action_variation_ema": [],
+            "right_linear_speed_raw": [],
+            "right_angular_speed_raw": [],
+            "right_action_variation_raw": [],
+            "right_action_variation_ema": [],
+            "context_linear_scale": [],
+            "context_angular_scale": [],
+            "context_action_variation_scale": [],
+            "motion_context_calibrated": [],
+            "motion_sharing_active": [],
+            "context_sharing_active": [],
+            "calibration_cv_linear": [],
+            "calibration_cv_angular": [],
+            "calibration_cv_action_variation": [],
+            "calibration_cv_max": [],
+            "calibration_stable_count": [],
+            "calibration_history_count": [],
+            "calibration_window_filled": [],
+            "motion_context_scale_frozen": [],
             "left_ee_pos_b": [],
             "right_ee_pos_b": [],
             "left_ee_quat_b": [],
@@ -216,6 +259,17 @@ class MotionContextTrainer(SequentialTrainer):
             "right_action_grip": [],
             "height_ok": [],
             "tilt_ok": [],
+            "left_distance_ok": [],
+            "right_distance_ok": [],
+            "left_orientation_ok": [],
+            "right_orientation_ok": [],
+            "left_closure_ok": [],
+            "right_closure_ok": [],
+            "left_finger_span_ok": [],
+            "right_finger_span_ok": [],
+            "left_span_ok": [],
+            "right_span_ok": [],
+            "success_hold_count": [],
             "left_grasp_ok": [],
             "right_grasp_ok": [],
             "dual_grasp_ok": [],
@@ -248,6 +302,12 @@ class MotionContextTrainer(SequentialTrainer):
                     return getattr(env, attr_name)
             except Exception:
                 pass
+            try:
+                cfg = getattr(env, "cfg", None)
+                if cfg is not None and hasattr(cfg, attr_name):
+                    return getattr(cfg, attr_name)
+            except Exception:
+                pass
             for child_name in ("_env", "_unwrapped", "env", "unwrapped"):
                 try:
                     child = getattr(env, child_name, None)
@@ -270,7 +330,8 @@ class MotionContextTrainer(SequentialTrainer):
                 continue
             visited.add(id(env))
             try:
-                if force_set or hasattr(env, attr_name):
+                cfg = getattr(env, "cfg", None)
+                if force_set or hasattr(env, attr_name) or (cfg is not None and hasattr(cfg, attr_name)):
                     setattr(env, attr_name, value)
                     updated = True
             except Exception:
@@ -289,7 +350,7 @@ class MotionContextTrainer(SequentialTrainer):
                 pass
 
     def _motion_context_checkpoint_state(self) -> dict:
-        """Return env-side normalization state saved beside policy checkpoints."""
+        """Return representation metadata saved beside policy checkpoints."""
 
         raw_scale = self._resolve_env_attr("_motion_context_running_scale", None)
         if isinstance(raw_scale, torch.Tensor) and raw_scale.numel() >= 3:
@@ -304,22 +365,59 @@ class MotionContextTrainer(SequentialTrainer):
                 dtype=torch.float32,
             )
 
-        step = int(self._resolve_env_attr("_motion_context_scale_update_step", -1) or -1)
-        freeze_after = int(self._resolve_env_attr("motion_context_freeze_after_steps", 10000) or 10000)
+        raw_step = self._resolve_env_attr("_motion_context_scale_update_step", -1)
+        step = int(-1 if raw_step is None else raw_step)
         common_step = int(self._resolve_env_attr("common_step_counter", 0) or 0)
-        scale_frozen = bool(
-            self._resolve_env_attr("_motion_context_scale_frozen", common_step >= freeze_after)
-        )
+        scale_frozen = bool(self._resolve_env_attr("_motion_context_scale_frozen", False))
+        calibrated = bool(self._resolve_env_attr("_motion_context_calibrated", False))
+        history = self._resolve_env_attr("_motion_context_calibration_history", None)
+        if isinstance(history, torch.Tensor):
+            history = history.detach().float().cpu().clone()
+        else:
+            history = torch.empty((0, 3), dtype=torch.float32)
+        cv = self._resolve_env_attr("_motion_context_calibration_cv", None)
+        if isinstance(cv, torch.Tensor) and cv.numel() >= 3:
+            cv = cv.detach().float().cpu().flatten()[:3].clone()
+        else:
+            cv = torch.zeros(3, dtype=torch.float32)
         return {
             "running_scale": running_scale,
             "scale_update_step": step,
             "common_step_counter": common_step,
             "scale_frozen": scale_frozen,
-            "freeze_after_steps": freeze_after,
-            "normalization": "ema_batch_p90",
-            "scale_beta": float(self._resolve_env_attr("motion_context_scale_beta", 0.99) or 0.99),
-            "scale_percentile": float(self._resolve_env_attr("motion_context_scale_percentile", 0.90) or 0.90),
-            "norm_max": float(self._resolve_env_attr("motion_context_norm_max", 1.5) or 1.5),
+            "context_calibrated": calibrated,
+            "calibration_enabled": bool(self._resolve_env_attr("motion_context_calibration_enabled", True)),
+            "calibration_history": history,
+            "calibration_history_index": int(
+                self._resolve_env_attr("_motion_context_calibration_history_index", 0) or 0
+            ),
+            "calibration_history_count": int(
+                self._resolve_env_attr("_motion_context_calibration_history_count", 0) or 0
+            ),
+            "calibration_stable_count": int(self._resolve_env_attr("_motion_context_calibration_stable_count", 0) or 0),
+            "calibration_cv": cv,
+            "calibration_window": int(self._resolve_env_attr("motion_context_calibration_window", 256) or 256),
+            "calibration_cv_threshold": float(self._resolve_env_attr("motion_context_calibration_cv_threshold", 0.02)),
+            "calibration_confirmations": int(
+                self._resolve_env_attr("motion_context_calibration_confirmations", 64) or 64
+            ),
+            "calibration_epsilon": float(
+                self._resolve_env_attr("motion_context_calibration_epsilon", 1.0e-6) or 1.0e-6
+            ),
+            "representation": str(self._resolve_env_attr("motion_context_representation", "trend")),
+            "normalization": {
+                "trend": "relative_ema_trend",
+                "absolute_fixed": "fixed_physical_scale",
+                "signed_twist": "fixed_angular_velocity_scale",
+            }[str(self._resolve_env_attr("motion_context_representation", "trend"))],
+            "trend_horizon": int(self._resolve_env_attr("motion_context_trend_horizon", 5) or 5),
+            "trend_beta": float(self._resolve_env_attr("motion_context_trend_beta", 0.80) or 0.80),
+            "twist_angular_scale": float(self._resolve_env_attr("motion_context_twist_ang_scale", 3.0)),
+            "trend_epsilon": [
+                float(self._resolve_env_attr("motion_context_trend_linear_epsilon", 0.01) or 0.01),
+                float(self._resolve_env_attr("motion_context_trend_angular_epsilon", 0.05) or 0.05),
+                float(self._resolve_env_attr("motion_context_trend_action_epsilon", 0.01) or 0.01),
+            ],
         }
 
     def _load_motion_context_checkpoint_state(self, state) -> None:
@@ -336,7 +434,33 @@ class MotionContextTrainer(SequentialTrainer):
             return
         self._set_env_attr("_motion_context_running_scale", scale_tensor[:3].clone())
         self._set_env_attr("_motion_context_scale_update_step", int(state.get("scale_update_step", -1)))
-        self._set_env_attr("_motion_context_scale_frozen", bool(state.get("scale_frozen", False)))
+        for attr_name, state_name, default in (
+            ("motion_context_calibration_enabled", "calibration_enabled", True),
+            ("motion_context_calibration_window", "calibration_window", 256),
+            ("motion_context_calibration_cv_threshold", "calibration_cv_threshold", 0.02),
+            ("motion_context_calibration_confirmations", "calibration_confirmations", 64),
+            ("motion_context_calibration_epsilon", "calibration_epsilon", 1.0e-6),
+        ):
+            self._set_env_attr(attr_name, state.get(state_name, default))
+        has_adaptive_state = "context_calibrated" in state
+        calibrated = bool(state.get("context_calibrated", False))
+        self._set_env_attr("_motion_context_calibrated", calibrated)
+        self._set_env_attr(
+            "_motion_context_scale_frozen",
+            bool(state.get("scale_frozen", calibrated)) if has_adaptive_state else False,
+        )
+        history = state.get("calibration_history", None)
+        if history is not None:
+            history_tensor = torch.as_tensor(history, dtype=torch.float32, device=device)
+            if history_tensor.ndim == 2 and history_tensor.shape[-1] == 3:
+                self._set_env_attr("_motion_context_calibration_history", history_tensor.clone())
+        cv = torch.as_tensor(state.get("calibration_cv", [0.0, 0.0, 0.0]), dtype=torch.float32, device=device)
+        if cv.numel() >= 3:
+            self._set_env_attr("_motion_context_calibration_cv", cv.flatten()[:3].clone())
+        self._set_env_attr("_motion_context_calibration_history_index", int(state.get("calibration_history_index", 0)))
+        self._set_env_attr("_motion_context_calibration_history_count", int(state.get("calibration_history_count", 0)))
+        self._set_env_attr("_motion_context_calibration_stable_count", int(state.get("calibration_stable_count", 0)))
+        self._set_env_attr("_motion_context_calibration_event_emitted", calibrated)
 
     def _intent_share_warmup_timesteps(self) -> int:
         """intent-share warmup 길이를 반환한다. eval에서는 요청하지 않으면 warmup을 끈다."""
@@ -421,7 +545,14 @@ class MotionContextTrainer(SequentialTrainer):
             value = value.detach().float().reshape(value.shape[0], -1)[:, :3].mean(dim=0)
         return format_motion(value)
 
-    def _append_mode_trace(self, outputs, rewards, infos, trace_signals: dict | None = None) -> None:
+    def _append_mode_trace(
+        self,
+        outputs,
+        rewards,
+        infos,
+        trace_signals: dict | None = None,
+        policy_states: dict[str, torch.Tensor] | None = None,
+    ) -> None:
         """Append one coherent evaluation transition to the JSON trace.
 
         ``trace_signals`` is sampled before ``env.step`` so state, outgoing
@@ -437,6 +568,7 @@ class MotionContextTrainer(SequentialTrainer):
             raise ValueError(f"Unsupported mode_trace_format: {self.mode_trace_format}. Only 'json' is supported.")
         env_index = int(max(0, min(self.mode_trace_env_index, self.env.num_envs - 1)))
         step_index = len(self._mode_trace["left_motion_context"])
+        record_policy_mean_actions(self._mode_trace, outputs, env_index)
         self._mode_trace["left_motion"].append(
             self._env_vector(outputs.get("left_arm", {}).get("motion_intent"), env_index, 3)
         )
@@ -450,6 +582,11 @@ class MotionContextTrainer(SequentialTrainer):
         self._mode_trace["right_message"].append(
             self._env_vector(outputs.get("right_arm", {}).get("intent"), env_index, slot_dim)
         )
+        own_dim = int(self._resolve_env_attr("own_observation_dim", 30))
+        for side, agent in (("left", "left_arm"), ("right", "right_arm")):
+            state = policy_states.get(agent) if policy_states is not None else None
+            partner_slot = state[..., own_dim : own_dim + slot_dim] if state is not None else None
+            self._mode_trace[f"{side}_policy_message"].append(self._env_vector(partner_slot, env_index, slot_dim))
 
         reward_left = 0.0
         reward_right = 0.0
@@ -466,6 +603,27 @@ class MotionContextTrainer(SequentialTrainer):
         else:
             signals = trace_signals
         self._mode_trace["success_signal"].append(bool(signals.get("success", False)))
+        if "ball_position_box" in signals:
+            for key in (
+                "ball_position_box",
+                "ball_position_w",
+                "ball_center_error",
+                "ball_inside",
+                "ball_center_ok",
+                "ball_camera_observation",
+            ):
+                self._mode_trace.setdefault(key, []).append(signals[key])
+        if "peg_tip_w" in signals:
+            for key in ("peg_tip_w", "hole_entrance_w", "hole_bottom_w"):
+                self._mode_trace.setdefault(key, []).append(signals[key])
+        if "left_grasp_error_m" in signals:
+            for key in (
+                "left_grasp_error_m",
+                "right_grasp_error_m",
+                "left_gripper_command_closed",
+                "right_gripper_command_closed",
+            ):
+                self._mode_trace.setdefault(key, []).append(signals[key])
         for key in (
             "object_z",
             "object_dz",
@@ -474,6 +632,7 @@ class MotionContextTrainer(SequentialTrainer):
             "axis_alignment",
             "insertion_depth",
             "target_insertion_depth",
+            "shaft_radial_envelope",
             "keypoint_dist",
             "preinsert_dist",
             "insert_pose_dist",
@@ -495,12 +654,36 @@ class MotionContextTrainer(SequentialTrainer):
             "right_ee_vel",
             "left_motion_context",
             "right_motion_context",
-            "left_linear_activity",
-            "left_angular_activity",
+            "left_translation_trend",
+            "left_rotation_trend",
+            "left_stability_trend",
             "left_action_smoothness",
-            "right_linear_activity",
-            "right_angular_activity",
+            "right_translation_trend",
+            "right_rotation_trend",
+            "right_stability_trend",
             "right_action_smoothness",
+            "left_linear_speed_raw",
+            "left_angular_speed_raw",
+            "left_action_variation_raw",
+            "left_action_variation_ema",
+            "right_linear_speed_raw",
+            "right_angular_speed_raw",
+            "right_action_variation_raw",
+            "right_action_variation_ema",
+            "context_linear_scale",
+            "context_angular_scale",
+            "context_action_variation_scale",
+            "motion_context_calibrated",
+            "motion_sharing_active",
+            "context_sharing_active",
+            "calibration_cv_linear",
+            "calibration_cv_angular",
+            "calibration_cv_action_variation",
+            "calibration_cv_max",
+            "calibration_stable_count",
+            "calibration_history_count",
+            "calibration_window_filled",
+            "motion_context_scale_frozen",
             "left_target_dist",
             "right_target_dist",
             "left_target_quat_error",
@@ -537,6 +720,17 @@ class MotionContextTrainer(SequentialTrainer):
             "right_action_grip",
             "height_ok",
             "tilt_ok",
+            "left_distance_ok",
+            "right_distance_ok",
+            "left_orientation_ok",
+            "right_orientation_ok",
+            "left_closure_ok",
+            "right_closure_ok",
+            "left_finger_span_ok",
+            "right_finger_span_ok",
+            "left_span_ok",
+            "right_span_ok",
+            "success_hold_count",
             "left_grasp_ok",
             "right_grasp_ok",
             "dual_grasp_ok",
@@ -705,6 +899,7 @@ class MotionContextTrainer(SequentialTrainer):
             termination_reason = "unknown"
         trace["termination_reason"] = termination_reason
         trace["terminal_success"] = terminal_success
+        trace["diagnostic_mask"] = self.diagnostic_mask
         trace["terminal_flags"] = {
             "success": terminal_success,
             "drop": terminal_drop,
@@ -715,11 +910,7 @@ class MotionContextTrainer(SequentialTrainer):
 
         # Agent/MAPPO owns the architecture debug values. Read through the public
         # getter so train and eval trace metadata stay identical.
-        agent_debug = (
-            self.agents.get_motion_context_debug()
-            if hasattr(self.agents, "get_motion_context_debug")
-            else {}
-        )
+        agent_debug = self.agents.get_motion_context_debug() if hasattr(self.agents, "get_motion_context_debug") else {}
         left_debug = agent_debug.get("left_arm", {})
         right_debug = agent_debug.get("right_arm", {})
         shared_intent_encoder = bool(
@@ -746,19 +937,22 @@ class MotionContextTrainer(SequentialTrainer):
                 except Exception:
                     pass
             try:
-                return float(self._resolve_env_attr(env_attr, default) or default)
+                value = self._resolve_env_attr(env_attr, default)
+                return float(default if value is None else value)
             except Exception:
                 return float(default)
 
         def _env_int(attr: str, default: int = 0) -> int:
             try:
-                return int(self._resolve_env_attr(attr, default) or default)
+                value = self._resolve_env_attr(attr, default)
+                return int(default if value is None else value)
             except Exception:
                 return int(default)
 
         def _env_float(attr: str, default: float = 0.0) -> float:
             try:
-                return float(self._resolve_env_attr(attr, default) or default)
+                value = self._resolve_env_attr(attr, default)
+                return float(default if value is None else value)
             except Exception:
                 return float(default)
 
@@ -773,36 +967,44 @@ class MotionContextTrainer(SequentialTrainer):
         trace_seed = int(getattr(env_cfg, "seed", 0) or 0) if env_cfg is not None else 0
 
         communication_mode = _env_str("communication_mode", "")
+        context_representation = _env_str("motion_context_representation", "trend")
+        context_layout = list(motion_context_layout(context_representation))
         communication_slot_dim = _env_int("communication_feature_dim", _env_int("intent_feature_dim", 0))
-        communication_payload_dim = min(
-            int(_COMMUNICATION_PAYLOAD_DIMS.get(communication_mode, communication_slot_dim)),
+        communication_payload_capacity_dim = min(
+            _env_int("own_observation_dim", 30)
+            if communication_mode == "full_partner_observation"
+            else int(_COMMUNICATION_PAYLOAD_DIMS.get(communication_mode, communication_slot_dim)),
             communication_slot_dim,
         )
+        communication_payload_dim = (
+            0 if _env_str("sharing_mode", "") == "no_share" else communication_payload_capacity_dim
+        )
         trace["metadata"] = {
-            "trace_schema": "openarm_motion_context/v2",
+            "trace_schema": "openarm_motion_context/v3",
             "timeline_convention": "state_message_action_t_reward_t_to_t_plus_1",
             "communication_delay_steps": 1,
             "seed": trace_seed,
+            "training_seed": self.cfg.get("mode_trace_training_seed"),
+            "evaluation_seed": trace_seed,
             "context_dim": _env_int("motion_context_dim", 0),
             "motion_intent_dim": _env_int("motion_intent_dim", 0),
             "communication_mode": communication_mode,
+            "diagnostic_mask": self.diagnostic_mask,
             "communication_feature_dim": communication_slot_dim,
             "communication_slot_dim": communication_slot_dim,
             "communication_payload_dim": communication_payload_dim,
-            "communication_payload_layout": _communication_layout(communication_mode),
+            "communication_payload_capacity_dim": communication_payload_capacity_dim,
+            "communication_payload_layout": (
+                _communication_layout(communication_mode, context_representation) if communication_payload_dim else []
+            ),
             "intent_feature_dim": _env_int("intent_feature_dim", 0),
             "intent_dim": _env_int("intent_feature_dim", 0),
             "own_obs_dim": _env_int("own_observation_dim", 0),
             "actor_input_dim": _env_int("actor_input_dim", 0),
             "motion_intent_horizon": _env_int("motion_intent_horizon", 0),
-            "motion_context_layout": [
-                "signed_motion_x",
-                "signed_motion_y",
-                "signed_motion_z",
-                "linear_activity",
-                "angular_activity",
-                "action_smoothness",
-            ],
+            "motion_context_representation": context_representation,
+            "legacy_trend_trace_fields_valid": context_representation == "trend",
+            "motion_context_layout": ["signed_motion_x", "signed_motion_y", "signed_motion_z", *context_layout],
             "env_index": int(self.mode_trace_env_index),
             "trace_env_index": int(self.mode_trace_env_index),
             "trace_episode_index": int(self._mode_trace_episode_index),
@@ -813,42 +1015,135 @@ class MotionContextTrainer(SequentialTrainer):
             "termination_reason": termination_reason,
             "task": self.mode_trace_task,
             "checkpoint": self.mode_trace_checkpoint,
+            "policy_warmstart": getattr(self, "policy_warmstart_manifest", None),
             "sharing_mode": _env_str("sharing_mode", ""),
             "method": communication_mode,
             "method_name": "Proprioceptive Motion Context Sharing",
             "reward": _env_str("intent_task_label", "openarm_task"),
-            "context_normalization": "ema_batch_p90",
+            "context_normalization": {
+                "trend": "relative_ema_trend",
+                "absolute_fixed": "fixed_physical_scale",
+                "signed_twist": "fixed_angular_velocity_scale",
+            }[context_representation],
             "context_dt": _env_float("step_dt", 1.0),
-            "context_layout": ["linear_activity", "angular_activity", "action_smoothness"],
-            "context_scale_beta": _env_float("motion_context_scale_beta", 0.99),
-            "context_scale_percentile": _env_float("motion_context_scale_percentile", 0.90),
-            "context_norm_max": _env_float("motion_context_norm_max", 1.5),
-            "context_update_scale": bool(self._resolve_env_attr("motion_context_update_scale", True)),
-            "context_freeze_after_steps": _env_int("motion_context_freeze_after_steps", 10000),
+            "context_layout": context_layout,
+            "legacy_context_aliases": {
+                "linear_activity": "translation_trend",
+                "angular_activity": "rotation_trend",
+                "motion_smoothness": "stability_trend",
+            }
+            if context_representation == "trend"
+            else {},
+            "context_trend_horizon": _env_int("motion_context_trend_horizon", 5),
+            "context_trend_beta": _env_float("motion_context_trend_beta", 0.80),
+            "context_trend_linear_epsilon": _env_float("motion_context_trend_linear_epsilon", 0.01),
+            "context_trend_angular_epsilon": _env_float("motion_context_trend_angular_epsilon", 0.05),
+            "context_trend_action_epsilon": _env_float("motion_context_trend_action_epsilon", 0.01),
+            "context_twist_angular_scale": _env_float("motion_context_twist_ang_scale", 3.0),
+            "context_update_scale": False,
+            "context_calibration_enabled": False,
+            "context_calibration_window": _env_int("motion_context_calibration_window", 256),
+            "context_calibration_cv_threshold": _env_float("motion_context_calibration_cv_threshold", 0.02),
+            "context_calibration_confirmations": _env_int("motion_context_calibration_confirmations", 64),
+            "context_calibration_epsilon": _env_float("motion_context_calibration_epsilon", 1.0e-6),
+            "context_calibrated": bool(self._resolve_env_attr("_motion_context_calibrated", False)),
             "context_running_scale": context_scale,
             "success_lateral_threshold": _env_float("success_lateral_threshold", 0.012),
             "success_axis_threshold": _env_float("success_axis_threshold", 0.85),
             "success_depth_threshold": _env_float("success_depth_threshold", 0.045),
             "target_insertion_depth": _env_float("target_insertion_depth", 0.05),
+            "insertion_depth_limit": _env_float("insertion_depth_limit", 0.0),
+            "success_radial_clearance": _env_float("success_radial_clearance", 0.0),
+            "peg_collision_radius": _env_float("peg_collision_radius", 0.0),
+            "success_depth_overrun_tolerance": _env_float("success_depth_overrun_tolerance", 0.0),
+            "success_protocol": str(self._resolve_env_attr("success_protocol", "legacy")),
+            "success_depth_ratio": _env_float("success_depth_ratio", 0.90),
+            "rotational_symmetry_order": _env_int("rotational_symmetry_order", 0),
             "wall_penetration_lateral_threshold": _env_float("wall_penetration_lateral_threshold", 0.015),
             "wall_penetration_depth_threshold": _env_float("wall_penetration_depth_threshold", 0.0),
+            "max_joint_target_error_rad": _env_float("max_joint_target_error_rad", 0.0),
+            "reward_axis_alignment_scale": _env_float("reward_axis_alignment_scale", 0.0),
+            "alignment_shaping_power": _env_float("alignment_shaping_power", 1.0),
+            "depth_overrun_std": _env_float("depth_overrun_std", 0.0),
+            "reward_insert_settle_scale": _env_float("reward_insert_settle_scale", 0.0),
+            "insert_settle_axis_width": _env_float("insert_settle_axis_width", 0.0),
+            "insert_settle_speed_std": _env_float("insert_settle_speed_std", 0.0),
+            "reward_lateral_alignment_scale": _env_float("reward_lateral_alignment_scale", 0.0),
+            "lateral_alignment_std": _env_float("lateral_alignment_std", 0.04),
+            "reset_arm_joint_noise_rad": _env_float("reset_arm_joint_noise_rad", 0.0),
+            "experimental_reset_fixed_objects_to_tcp": bool(
+                self._resolve_env_attr("experimental_reset_fixed_objects_to_tcp", False)
+            ),
             "shared_intent_encoder": shared_intent_encoder,
             "context_classifier": False,
             "auxiliary_loss": False,
             "actor_backbone_shared": False,
             "action_head_shared": False,
-            "partner_message_embed_dim": int(left_debug.get("partner_message_embed_dim", right_debug.get("partner_message_embed_dim", 0))),
-            "partner_intent_embed_dim": int(left_debug.get("partner_intent_embed_dim", right_debug.get("partner_intent_embed_dim", 0))),
-            "actor_action_input_dim": int(left_debug.get("actor_action_input_dim", right_debug.get("actor_action_input_dim", 0))),
-            "gripper_head_input_dim": int(left_debug.get("gripper_head_input_dim", right_debug.get("gripper_head_input_dim", 0))),
-            "architecture": (
-                "agent_specific_actor_partner_context_encoder"
-                if shared_intent_encoder
-                else "no_intent"
+            "partner_message_embed_dim": int(
+                left_debug.get("partner_message_embed_dim", right_debug.get("partner_message_embed_dim", 0))
             ),
+            "partner_intent_embed_dim": int(
+                left_debug.get("partner_intent_embed_dim", right_debug.get("partner_intent_embed_dim", 0))
+            ),
+            "actor_action_input_dim": int(
+                left_debug.get("actor_action_input_dim", right_debug.get("actor_action_input_dim", 0))
+            ),
+            "gripper_head_input_dim": int(
+                left_debug.get("gripper_head_input_dim", right_debug.get("gripper_head_input_dim", 0))
+            ),
+            "architecture": ("agent_specific_actor_partner_context_encoder" if shared_intent_encoder else "no_intent"),
             "actor_input_excludes_contact_reward_success_object_z": True,
+            "policy_mean_action_semantics": "pre-clamp latent Gaussian mean; not sampled executed actions",
             "deterministic_eval": not bool(getattr(self, "stochastic_evaluation", True)),
         }
+
+        if "lift" in str(self.mode_trace_task).lower():
+            trace["metadata"].update(
+                {
+                    "lift_target_height": _env_float("lift_target_height", 0.10),
+                    "success_height_margin": _env_float("success_height_margin", 0.10),
+                    "success_grasp_distance": _env_float("success_grasp_distance", 0.08),
+                    "success_grasp_orientation_deg": _env_float("success_grasp_orientation_deg", 30.0),
+                    "success_min_closure": _env_float("success_min_closure", 0.30),
+                    "success_tilt_threshold_deg": _env_float("success_tilt_threshold_deg", 10.0),
+                    "hold_required_steps": _env_int("hold_required_steps", 60),
+                    "actor_object_pose_source": _env_str("actor_object_pose_source", ""),
+                    "apriltag_measurement_source": _env_str("apriltag_measurement_source", ""),
+                    "camera_extra_observation_dim": _env_int("camera_extra_observation_dim", 0),
+                }
+            )
+
+        if bool(self._resolve_env_attr("require_contact_grasp", False)):
+            trace["metadata"].update(
+                {
+                    "grasp_attachment_mode": "contact_friction",
+                    "initialization": "pregrasp_on_reset",
+                    "grasp_success_distance": _env_float("grasp_success_distance", 0.020),
+                    "grasp_drop_distance": _env_float("grasp_drop_distance", 0.040),
+                    "grasp_validity_source": "grasp_point_distance_and_closed_command_not_contact_force",
+                }
+            )
+
+        if "ball_position_box" in trace:
+            trace["metadata"].update(
+                {
+                    "ball_observation_source": "rendered_axial_depth_and_oracle_semantic_image_mask",
+                    "ball_pose_ground_truth_in_actor": False,
+                    "ball_camera_position_scale": _env_float("ball_camera_position_scale", 0.20),
+                    "reward_ball_center_scale": _env_float("reward_ball_center_scale", 2.0),
+                    "ball_reward_profile": _env_str("ball_reward_profile", "original"),
+                    "reward_grasp_scale": _env_float("reward_grasp_scale", 5.0),
+                    "reward_lift_scale": _env_float("reward_lift_scale", 20.0),
+                    "ball_height_bridge_scale": _env_float("ball_height_bridge_scale", 0.0),
+                    "ball_upright_bridge_scale": _env_float("ball_upright_bridge_scale", 0.0),
+                    "ball_upright_decay_deg": _env_float("ball_upright_decay_deg", 20.0),
+                    "ball_center_penalty_scale": _env_float("ball_center_penalty_scale", 0.0),
+                    "ball_center_success_threshold": _env_float("ball_center_success_threshold", 0.05),
+                    "ball_mass_kg": _env_float("expected_ball_mass_kg", 2.102),
+                    "lift_success_definition_unchanged": True,
+                    "ball_center_success_is_separate_metric": True,
+                }
+            )
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(trace, f, indent=2)
@@ -976,16 +1271,25 @@ class MotionContextTrainer(SequentialTrainer):
             self._resolve_env_attr("communication_enabled", communication_mode != "none" and sharing_mode != "no_share")
         )
         own_dim = int(self._resolve_env_attr("own_observation_dim", 0) or 0)
-        slot_dim = int(self._resolve_env_attr("communication_feature_dim", self._resolve_env_attr("intent_feature_dim", 0)) or 0)
+        slot_dim = int(
+            self._resolve_env_attr("communication_feature_dim", self._resolve_env_attr("intent_feature_dim", 0)) or 0
+        )
         motion_dim = int(self._resolve_env_attr("motion_intent_dim", 3) or 3)
         context_dim = int(self._resolve_env_attr("motion_context_dim", 3) or 0)
         if communication_mode == "none":
             context_dim = 0
-        payload_dim = min(int(_COMMUNICATION_PAYLOAD_DIMS.get(communication_mode, slot_dim)), slot_dim)
+        payload_dim = min(
+            own_dim
+            if communication_mode == "full_partner_observation"
+            else int(_COMMUNICATION_PAYLOAD_DIMS.get(communication_mode, slot_dim)),
+            slot_dim,
+        )
         actor_in_dim = own_dim + slot_dim
         phase = "eval" if self._in_eval else "train"
         log_info = infos.get("log", {})
-        context_debug = self.agents.get_motion_context_debug() if hasattr(self.agents, "get_motion_context_debug") else {}
+        context_debug = (
+            self.agents.get_motion_context_debug() if hasattr(self.agents, "get_motion_context_debug") else {}
+        )
         left_debug = context_debug.get("left_arm", {})
         right_debug = context_debug.get("right_arm", {})
         if communication_mode == "none":
@@ -1015,6 +1319,7 @@ class MotionContextTrainer(SequentialTrainer):
             self._resolve_env_attr("debug_verbose", False)
         )
         if not debug_verbose:
+
             def _log(name: str, default: float = 0.0) -> float:
                 return self._scalar(log_info.get(name), default=default)
 
@@ -1037,15 +1342,15 @@ class MotionContextTrainer(SequentialTrainer):
             episode_summary = self._episode_summary()
             if episode_summary:
                 print(
-                    "  episode(last100): "
-                    f"n={episode_summary['count']:.0f} "
-                    f"success_rate={episode_summary['success_rate']:.2f} "
-                    f"mean_return={episode_summary['mean_return']:.2f} "
-                    f"mean_length={episode_summary['mean_length']:.1f} "
-                    f"timeout={episode_summary['timeout']:.2f} "
+                    "  episode(last100)\n"
+                    f"    result : n={episode_summary['count']:.0f} "
+                    f"success={episode_summary['success_rate']:.2f} "
+                    f"return={episode_summary['mean_return']:.1f} "
+                    f"length={episode_summary['mean_length']:.1f}\n"
+                    f"    end    : timeout={episode_summary['timeout']:.2f} "
                     f"drop={episode_summary['drop']:.2f} "
                     f"far={episode_summary['far']:.2f} "
-                    f"tilt_fail={episode_summary['tilt_fail']:.2f} "
+                    f"tilt={episode_summary['tilt_fail']:.2f} "
                     f"invalid={episode_summary['invalid']:.2f}"
                 )
 
@@ -1063,52 +1368,121 @@ class MotionContextTrainer(SequentialTrainer):
                 return row
 
             if communication_mode == "none":
-                print("  received_message: disabled")
+                print("  communication: disabled")
             else:
+                left_payload = _message_slice("left", 0, payload_dim)
+                right_payload = _message_slice("right", 0, payload_dim)
+                left_payload_norm = float(torch.linalg.vector_norm(torch.tensor(left_payload))) if left_payload else 0.0
+                right_payload_norm = (
+                    float(torch.linalg.vector_norm(torch.tensor(right_payload))) if right_payload else 0.0
+                )
+                if communication_mode in ("motion_only", "motion_context", "motion_context_la", "motion_context_s"):
+                    left_received_motion = f" motion={format_motion(right_payload[:motion_dim])}"
+                    right_received_motion = f" motion={format_motion(left_payload[:motion_dim])}"
+                else:
+                    left_received_motion = ""
+                    right_received_motion = ""
+                if communication_mode in ("context_only", "motion_context", "motion_context_la", "motion_context_s"):
+                    context_start = motion_dim if communication_mode != "context_only" else 0
+                    left_received_context = right_payload[context_start : context_start + context_dim]
+                    right_received_context = left_payload[context_start : context_start + context_dim]
+                    context_names = motion_context_layout(
+                        str(self._resolve_env_attr("motion_context_representation", "trend"))
+                    )
+                    left_received_context_text = (
+                        " context=["
+                        + ", ".join(
+                            f"{name}={float(value):+.2f}" for name, value in zip(context_names, left_received_context)
+                        )
+                        + "]"
+                    )
+                    right_received_context_text = (
+                        " context=["
+                        + ", ".join(
+                            f"{name}={float(value):+.2f}" for name, value in zip(context_names, right_received_context)
+                        )
+                        + "]"
+                    )
+                else:
+                    left_received_context_text = ""
+                    right_received_context_text = ""
+                print(
+                    f"  communication (payload={payload_dim}/{slot_dim})\n"
+                    f"    L <- R : norm={right_payload_norm:.2f}"
+                    f"{left_received_motion}{left_received_context_text}\n"
+                    f"    R <- L : norm={left_payload_norm:.2f}"
+                    f"{right_received_motion}{right_received_context_text}"
+                )
                 signals = {}
                 if hasattr(self.env, "get_paper_motion_context_trace_signals"):
                     try:
                         signals = self.env.get_paper_motion_context_trace_signals(0)
                     except Exception:
                         signals = {}
-                left_context = signals.get("left_motion_context", [0.0, 0.0, 0.0])
-                right_context = signals.get("right_motion_context", [0.0, 0.0, 0.0])
-                left_payload = _message_slice("left", 0, payload_dim)
-                right_payload = _message_slice("right", 0, payload_dim)
-                left_payload_norm = float(torch.linalg.vector_norm(torch.tensor(left_payload))) if left_payload else 0.0
-                right_payload_norm = float(torch.linalg.vector_norm(torch.tensor(right_payload))) if right_payload else 0.0
-                print(
-                    "  message: "
-                    f"L->R norm={left_payload_norm:.2f} R->L norm={right_payload_norm:.2f} "
-                    f"active={payload_dim}/{slot_dim}"
-                )
-                if communication_mode in ("motion_only", "motion_context"):
+                if (
+                    communication_mode in ("context_only", "motion_context", "motion_context_la", "motion_context_s")
+                    and signals
+                ):
+                    left_generated = signals.get("left_motion_context", [0.0, 0.0, 0.0])
+                    right_generated = signals.get("right_motion_context", [0.0, 0.0, 0.0])
                     print(
-                        "  received_motion: "
-                        f"L<-R={format_motion(right_payload[:motion_dim])} "
-                        f"R<-L={format_motion(left_payload[:motion_dim])}"
-                    )
-                if communication_mode in ("context_only", "motion_context"):
-                    context_start = motion_dim if communication_mode == "motion_context" else 0
-                    left_received_context = right_payload[context_start : context_start + context_dim]
-                    right_received_context = left_payload[context_start : context_start + context_dim]
-                    print(
-                        "  received_context: "
-                        f"L<-R=[lin={float(left_received_context[0]):.2f}, ang={float(left_received_context[1]):.2f}, smooth={float(left_received_context[2]):.2f}] "
-                        f"R<-L=[lin={float(right_received_context[0]):.2f}, ang={float(right_received_context[1]):.2f}, smooth={float(right_received_context[2]):.2f}]"
+                        "    generated: L=["
+                        + ", ".join(f"{name}={float(value):+.2f}" for name, value in zip(context_names, left_generated))
+                        + "] R=["
+                        + ", ".join(
+                            f"{name}={float(value):+.2f}" for name, value in zip(context_names, right_generated)
+                        )
+                        + "]"
                     )
                     print(
-                        "  outgoing_context: "
-                        f"L=[lin={float(left_context[0]):.2f}, ang={float(left_context[1]):.2f}, smooth={float(left_context[2]):.2f}] "
-                        f"R=[lin={float(right_context[0]):.2f}, ang={float(right_context[1]):.2f}, smooth={float(right_context[2]):.2f}]"
+                        "    raw/ema : "
+                        f"L=[v={signals.get('left_linear_speed_raw', 0.0):.3f},"
+                        f"w={signals.get('left_angular_speed_raw', 0.0):.3f},"
+                        f"da={signals.get('left_action_variation_raw', 0.0):.3f}/"
+                        f"{signals.get('left_action_variation_ema', 0.0):.3f}] "
+                        f"R=[v={signals.get('right_linear_speed_raw', 0.0):.3f},"
+                        f"w={signals.get('right_angular_speed_raw', 0.0):.3f},"
+                        f"da={signals.get('right_action_variation_raw', 0.0):.3f}/"
+                        f"{signals.get('right_action_variation_ema', 0.0):.3f}]"
                     )
                 raw_scale = self._resolve_env_attr("_motion_context_running_scale", None)
                 if isinstance(raw_scale, torch.Tensor) and raw_scale.numel() >= 3:
                     scale = raw_scale[:3].detach().float().cpu().tolist()
+                    calibrated = bool(self._resolve_env_attr("_motion_context_calibrated", False))
+                    calibration_enabled = bool(self._resolve_env_attr("motion_context_calibration_enabled", True))
+                    cv = self._resolve_env_attr("_motion_context_calibration_cv", None)
+                    if isinstance(cv, torch.Tensor) and cv.numel() >= 3:
+                        cv_values = cv[:3].detach().float().cpu().tolist()
+                    else:
+                        cv_values = [0.0, 0.0, 0.0]
+                    history_count = int(self._resolve_env_attr("_motion_context_calibration_history_count", 0) or 0)
+                    window = int(self._resolve_env_attr("motion_context_calibration_window", 256) or 256)
+                    stable_count = int(self._resolve_env_attr("_motion_context_calibration_stable_count", 0) or 0)
+                    confirmations = int(self._resolve_env_attr("motion_context_calibration_confirmations", 64) or 64)
+                    motion_active = communication_mode in (
+                        "motion_only",
+                        "motion_context",
+                        "motion_context_la",
+                        "motion_context_s",
+                    )
+                    context_active = communication_mode in (
+                        "context_only",
+                        "motion_context",
+                        "motion_context_la",
+                        "motion_context_s",
+                    ) and ((not calibration_enabled) or calibrated)
                     print(
-                        "  context_scale: "
-                        f"lin={scale[0]:.4f} ang={scale[1]:.4f} action={scale[2]:.4f} "
-                        f"freeze_after={int(self._resolve_env_attr('motion_context_freeze_after_steps', 10000) or 10000)}"
+                        "    scale  : "
+                        f"lin={scale[0]:.3f} ang={scale[1]:.3f} action={scale[2]:.3f} "
+                        f"frozen={bool(self._resolve_env_attr('_motion_context_scale_frozen', False))}"
+                    )
+                    print(
+                        "    calibration: "
+                        f"enabled={calibration_enabled} calibrated={calibrated} "
+                        f"motion_active={motion_active} context_active={context_active}\n"
+                        "      cv=["
+                        f"lin={cv_values[0]:.5f},ang={cv_values[1]:.5f},action={cv_values[2]:.5f}] "
+                        f"history={history_count}/{window} stable={stable_count}/{confirmations}"
                     )
 
             height_ok = _log("height_ok_ratio")
@@ -1131,11 +1505,14 @@ class MotionContextTrainer(SequentialTrainer):
                 success_rate = _log("peg_hole/success_rate")
                 axis_align = _log("peg_hole/axis_alignment")
                 axis_error_deg = _log("peg_hole/axis_error_deg")
+                twist_align = _log("peg_hole/twist_alignment", 1.0)
+                twist_error_deg = _log("peg_hole/twist_error_deg")
                 lateral_error = _log("peg_hole/lateral_error")
                 insertion_depth = _log("peg_hole/insertion_depth")
                 target_depth = _log("peg_hole/target_insertion_depth", 0.025)
                 axis_gate = _log("peg_hole/axis_gate", max(0.0, min(axis_align, 1.0)))
                 lateral_gate = _log("peg_hole/lateral_gate", 1.0)
+                twist_gate = _log("peg_hole/twist_gate", 1.0)
                 insertion_gate = _log("peg_hole/insertion_gate", axis_gate * lateral_gate)
                 depth_progress = _log(
                     "peg_hole/depth_progress",
@@ -1154,6 +1531,8 @@ class MotionContextTrainer(SequentialTrainer):
                     bottleneck = "preinsert"
                 elif axis_gate < 0.2:
                     bottleneck = "axis_alignment"
+                elif twist_gate < 0.2:
+                    bottleneck = "twist_alignment"
                 elif lateral_gate < 0.2:
                     bottleneck = "lateral"
                 elif depth_progress < 0.8:
@@ -1180,6 +1559,7 @@ class MotionContextTrainer(SequentialTrainer):
                     f"kp_dlast={_log('peg_hole/keypoint_dist_last'):.3f} "
                     f"axis_align={axis_align:.3f}/{axis_threshold:.3f} "
                     f"axis_error={axis_error_deg:.1f}deg "
+                    f"twist={twist_align:.3f} ({twist_error_deg:.1f}deg) "
                     f"kp_num={_log('peg_hole/keypoint_num'):.0f} "
                     f"kp_spacing={_log('peg_hole/keypoint_spacing'):.3f} "
                     f"target_depth={target_depth:.3f}"
@@ -1192,6 +1572,13 @@ class MotionContextTrainer(SequentialTrainer):
                     f"target_spacing={_log('peg_hole/fixed_keypoint_spacing'):.4f}"
                 )
                 print(
+                    "  object_attach: "
+                    f"pre_sync_mean=peg:{_log('peg_hole/peg_attach_error'):.6f}/"
+                    f"hole:{_log('peg_hole/hole_attach_error'):.6f}m "
+                    f"max=peg:{_log('peg_hole/peg_attach_error_max'):.6f}/"
+                    f"hole:{_log('peg_hole/hole_attach_error_max'):.6f}m"
+                )
+                print(
                     "  geometry_gate: "
                     f"tip_dist={_log('peg_hole/tip_dist'):.3f} "
                     f"lateral={lateral_error:.3f}/{lateral_threshold:.3f} "
@@ -1199,6 +1586,7 @@ class MotionContextTrainer(SequentialTrainer):
                     f"depth_progress={depth_progress:.2f} "
                     f"axis_gate={axis_gate:.2f} "
                     f"lateral_gate={lateral_gate:.2f} "
+                    f"twist_gate={twist_gate:.2f} "
                     f"insertion_gate={insertion_gate:.2f} "
                     f"hold={_log('hold_count_mean'):.1f}/{_log('hold_required_steps'):.0f} "
                     f"step_scale={_log('action_scale_mean'):.3f} "
@@ -1257,124 +1645,68 @@ class MotionContextTrainer(SequentialTrainer):
                 )
                 _print_action_debug()
             elif task_label.startswith("openarm_lift") or task_label.startswith("openarm_re_"):
-                goal_error_name = "y_error" if _has_log("y_error") else "xy_error"
-                roll_pitch_deg = _log(
-                    "success_roll_pitch_deg",
-                    max(_log("success_roll_deg"), _log("success_pitch_deg")),
-                )
-                yaw_deg = _log("success_yaw_deg")
-                dual_grasp_ok = _log("dual_grasp_gate")
-                stable_now = _log("stable_now_ratio", min(height_ok, tilt_ok))
+                left_grasp = _log("left_grasp_hint")
+                right_grasp = _log("right_grasp_hint")
+                grasp_ok = _log("success_grasp_ok_ratio")
                 strict_success = _log("strict_success_ratio", _log("success_ratio"))
-                if dual_grasp_ok < 0.3:
+                if grasp_ok < 0.5:
                     bottleneck = "grasp"
-                elif height_ok < 0.3:
+                elif height_ok < 0.5:
                     bottleneck = "lift"
-                elif stable_now < 0.3:
-                    bottleneck = "stability"
-                elif strict_success < 0.3:
+                elif tilt_ok < 0.5:
+                    bottleneck = "tilt"
+                elif strict_success < 0.5:
                     bottleneck = "hold"
                 else:
                     bottleneck = "solved"
                 print(
-                    "  reward: "
-                    f"assigned_team={_log('team_reward', _log('left_reward')):+.2f} "
-                    f"terms=reach:{_log('reward_reach_term'):+.2f} "
-                    f"grasp:{_log('reward_grasp_term'):+.2f} "
-                    f"lift:{_log('reward_lift_term'):+.2f} "
-                    f"success:{_log('reward_success_term'):+.2f} "
-                    f"action:-{_log('reward_action_term'):.4f} "
-                    f"bottleneck={bottleneck}"
+                    "  reward\n"
+                    f"    total  : {_log('team_reward', _log('left_reward')):+.2f}\n"
+                    f"    terms  : approach={_log('reward_approach_term', _log('reward_reach_term')):+.2f} "
+                    f"grasp={_log('reward_grasp_term'):+.2f} "
+                    f"lift={_log('reward_lift_term'):+.2f} "
+                    f"success={_log('reward_success_term'):+.2f} "
+                    f"action=-{_log('reward_action_term'):.4f} "
+                    f"joint_vel=-{_log('reward_joint_vel_term'):.4f}"
                 )
                 print(
-                    "  conditions: "
-                    f"reach=L:{_log('left_reach'):.2f}/R:{_log('right_reach'):.2f} "
-                    f"orientation=L:{_log('left_orientation'):.2f}/R:{_log('right_orientation'):.2f} "
-                    f"dual_grasp={dual_grasp_ok:.2f} "
-                    f"height_ok={height_ok:.2f} "
-                    f"tilt_ok={tilt_ok:.2f} "
-                    f"stable_now={stable_now:.2f} "
-                    f"strict_success={strict_success:.2f}"
+                    "  task state\n"
+                    f"    grasp  : dist=L:{_log('left_actor_dist'):.3f}/R:{_log('right_actor_dist'):.3f}m "
+                    f"score=L:{left_grasp:.2f}/R:{right_grasp:.2f}\n"
+                    f"             ori_err=L:{_log('left_ori_err'):.2f}/R:{_log('right_ori_err'):.2f}rad "
+                    f"closure=L:{_log('left_closure'):.2f}/R:{_log('right_closure'):.2f}\n"
+                    f"             inside=L:{_log('left_target_inside_gripper'):.2f}/"
+                    f"R:{_log('right_target_inside_gripper'):.2f} "
+                    f"midline=L:{_log('left_target_to_gripper_midline_dist'):.3f}/"
+                    f"R:{_log('right_target_to_gripper_midline_dist'):.3f}m\n"
+                    f"             ready=L:{_log('left_pose_readiness'):.2f}/R:{_log('right_pose_readiness'):.2f} "
+                    f"feas=L:{_log('left_grasp_feasibility'):.2f}/"
+                    f"R:{_log('right_grasp_feasibility'):.2f}\n"
+                    f"             "
+                    f"early_close=L:{_log('left_premature_closure'):.2f}/"
+                    f"R:{_log('right_premature_closure'):.2f}\n"
+                    f"             valid=L[d:{_log('left_distance_ok_ratio'):.2f},"
+                    f"o:{_log('left_orientation_ok_ratio'):.2f},"
+                    f"c:{_log('left_closure_ok_ratio'):.2f},"
+                    f"s:{_log('left_finger_span_ok_ratio'):.2f}] "
+                    f"R[d:{_log('right_distance_ok_ratio'):.2f},"
+                    f"o:{_log('right_orientation_ok_ratio'):.2f},"
+                    f"c:{_log('right_closure_ok_ratio'):.2f},"
+                    f"s:{_log('right_finger_span_ok_ratio'):.2f}]\n"
+                    f"    lift   : dz(mean/max)={_log('object_height_delta'):.3f}/"
+                    f"{_log('object_height_delta_max'):.3f}m "
+                    f"target={float(self._resolve_env_attr('success_height_margin', 0.10)):.3f}m "
+                    f"reached={height_ok:.2f} "
+                    f"tilt={_log('object_tilt_deg'):.1f}/"
+                    f"{float(self._resolve_env_attr('success_tilt_threshold_deg', 10.0)):.1f}deg\n"
+                    f"    success: hold={_log('hold_count_max'):.0f}/{_log('hold_required_steps'):.0f} "
+                    f"rate={strict_success:.2f} bottleneck={bottleneck}\n"
+                    f"    april  : grasp_target_tf_error="
+                    f"{max(_log('left_actor_target_pos_error_max'), _log('right_actor_target_pos_error_max')):.6f}m "
+                    f"height_error={_log('object_height_estimation_error_max'):.6f}m"
                 )
-                print(
-                    "  grasp_target_tf: "
-                    f"actor_vs_gt_pos=L:{_log('left_actor_target_pos_error'):.6f}/"
-                    f"R:{_log('right_actor_target_pos_error'):.6f}m "
-                    f"max=L:{_log('left_actor_target_pos_error_max'):.6f}/"
-                    f"R:{_log('right_actor_target_pos_error_max'):.6f}m "
-                    f"rot=L:{_log('left_actor_target_rot_error_deg'):.3f}/"
-                    f"R:{_log('right_actor_target_rot_error_deg'):.3f}deg"
-                )
-                print(
-                    "  grasp_target_geometry: "
-                    f"local_L=[{_log('left_target_local_x'):+.4f},"
-                    f"{_log('left_target_local_y'):+.4f},{_log('left_target_local_z'):+.4f}] "
-                    f"local_R=[{_log('right_target_local_x'):+.4f},"
-                    f"{_log('right_target_local_y'):+.4f},{_log('right_target_local_z'):+.4f}] "
-                    f"ee_to_actor=L:{_log('left_actor_dist'):.3f}/R:{_log('right_actor_dist'):.3f}m "
-                    f"ee_to_gt=L:{_log('left_dist'):.3f}/R:{_log('right_dist'):.3f}m"
-                )
-                print(
-                    "  grasp_target_world[env0]: "
-                    f"box=[{_log('sample_object_x'):+.3f},{_log('sample_object_y'):+.3f},"
-                    f"{_log('sample_object_z'):+.3f}] "
-                    f"L=[{_log('sample_left_actor_target_x'):+.3f},"
-                    f"{_log('sample_left_actor_target_y'):+.3f},"
-                    f"{_log('sample_left_actor_target_z'):+.3f}] "
-                    f"R=[{_log('sample_right_actor_target_x'):+.3f},"
-                    f"{_log('sample_right_actor_target_y'):+.3f},"
-                    f"{_log('sample_right_actor_target_z'):+.3f}]"
-                )
-                print(
-                    "  hold: "
-                    f"mean={_log('hold_count_mean'):.1f} "
-                    f"p90={_log('hold_count_p90'):.1f} "
-                    f"max={_log('hold_count_max'):.0f} "
-                    f"required={_log('hold_required_steps'):.0f}"
-                )
-                print(
-                    "  grasp_kinematic:\n"
-                    f"    L(near={_log('left_near_collision_target'):.2f}, ori={_log('left_orientation'):.2f}, "
-                    f"cmd={_log('left_close_command'):.2f}, closure={_log('left_closure'):.2f}, "
-                    f"close_signal={_log('left_close_signal'):.2f}, "
-                    f"inside={_log('left_target_inside_gripper'):.2f}, "
-                    f"span={_log('left_target_inside_finger_span'):.2f}, "
-                    f"center={_log('left_target_centered_between_fingers'):.2f}, "
-                    f"midline_dist={_log('left_target_to_gripper_midline_dist'):.3f})\n"
-                    f"    R(near={_log('right_near_collision_target'):.2f}, ori={_log('right_orientation'):.2f}, "
-                    f"cmd={_log('right_close_command'):.2f}, closure={_log('right_closure'):.2f}, "
-                    f"close_signal={_log('right_close_signal'):.2f}, "
-                    f"inside={_log('right_target_inside_gripper'):.2f}, "
-                    f"span={_log('right_target_inside_finger_span'):.2f}, "
-                    f"center={_log('right_target_centered_between_fingers'):.2f}, "
-                    f"midline_dist={_log('right_target_to_gripper_midline_dist'):.3f})"
-                )
-                print(
-                    "  grasp_frame_check: "
-                    f"tcp_from_finger_origin=L:{_log('left_tcp_from_finger_origin_dist'):.3f}/"
-                    f"R:{_log('right_tcp_from_finger_origin_dist'):.3f}m "
-                    f"target_to_tcp_plane=L:{_log('left_target_to_tcp_plane_dist'):.3f}/"
-                    f"R:{_log('right_target_to_tcp_plane_dist'):.3f}m "
-                    f"inside_tcp_plane=L:{_log('left_target_inside_tcp_plane'):.2f}/"
-                    f"R:{_log('right_target_inside_tcp_plane'):.2f}"
-                )
-                print(
-                    "  object: "
-                    f"dz={_log('object_height_delta'):.3f} lift_progress={_log('lift'):.2f} "
-                    f"grasp_gate={dual_grasp_ok:.2f} lift_gate={_log('dual_lift_gate'):.2f} "
-                    f"tilt_lift={_log('tilt_aware_lift', _log('lift')):.2f} "
-                    f"tilt={_log('object_tilt_deg'):.1f}deg "
-                    f"roll_pitch={roll_pitch_deg:.1f}deg yaw={yaw_deg:.1f}deg "
-                    f"tilt_pen={_log('tilt_penalty'):.2f} "
-                    f"{goal_error_name}={_log(goal_error_name):.3f}"
-                )
-                _print_action_debug()
                 if _has_log("ball_xy_error") or _has_log("ball_center_tracking"):
-                    print(
-                        "  ball: "
-                        f"xy_err={_log('ball_xy_error'):.3f} "
-                        f"center={_log('ball_center_tracking'):.2f}"
-                    )
+                    print(f"  ball: xy_err={_log('ball_xy_error'):.3f} center={_log('ball_center_tracking'):.2f}")
             else:
                 print(
                     "  reward: "
@@ -1407,6 +1739,7 @@ class MotionContextTrainer(SequentialTrainer):
                         f"reward={_log('ball_center_reward'):.2f}"
                     )
             return
+        context_names = motion_context_layout(str(self._resolve_env_attr("motion_context_representation", "trend")))
         if communication_mode == "none" or context_dim <= 0:
             print("  communication: disabled")
             print("    share_to_partner: disabled")
@@ -1423,13 +1756,26 @@ class MotionContextTrainer(SequentialTrainer):
             print("  communication:")
             print(
                 f"    L self: motion={self._fmt_motion(outputs['left_arm'].get('motion_intent'))} "
-                f"context=[lin={float(left_context[0]):.2f}, ang={float(left_context[1]):.2f}, "
-                f"smooth={float(left_context[2]):.2f}]"
+                "context=["
+                + ", ".join(f"{name}={float(value):+.2f}" for name, value in zip(context_names, left_context))
+                + "]"
             )
             print(
                 f"    R self: motion={self._fmt_motion(outputs['right_arm'].get('motion_intent'))} "
-                f"context=[lin={float(right_context[0]):.2f}, ang={float(right_context[1]):.2f}, "
-                f"smooth={float(right_context[2]):.2f}]"
+                "context=["
+                + ", ".join(f"{name}={float(value):+.2f}" for name, value in zip(context_names, right_context))
+                + "]"
+            )
+            print(
+                "    raw/ema: "
+                f"L=[v={float(signals.get('left_linear_speed_raw', 0.0)):.3f}, "
+                f"w={float(signals.get('left_angular_speed_raw', 0.0)):.3f}, "
+                f"da={float(signals.get('left_action_variation_raw', 0.0)):.3f}/"
+                f"{float(signals.get('left_action_variation_ema', 0.0)):.3f}] "
+                f"R=[v={float(signals.get('right_linear_speed_raw', 0.0)):.3f}, "
+                f"w={float(signals.get('right_angular_speed_raw', 0.0)):.3f}, "
+                f"da={float(signals.get('right_action_variation_raw', 0.0)):.3f}/"
+                f"{float(signals.get('right_action_variation_ema', 0.0)):.3f}]"
             )
             print("    share_to_partner:")
             if not communication_enabled:
@@ -1441,7 +1787,7 @@ class MotionContextTrainer(SequentialTrainer):
             print("    context_classifier: disabled")
         print(
             "  context_config:\n"
-            "    z=[signed_EE_motion_3D, linear_activity, angular_activity, action_smoothness]\n"
+            f"    z=[signed_EE_motion_3D, {', '.join(context_names)}]\n"
             "    context_classifier=disabled auxiliary_loss=disabled warmup=disabled"
         )
 
@@ -1470,10 +1816,18 @@ class MotionContextTrainer(SequentialTrainer):
         left_force_outer = self._scalar(log_info.get("left_grasp_force_outer"))
         right_force_inner = self._scalar(log_info.get("right_grasp_force_inner"))
         right_force_outer = self._scalar(log_info.get("right_grasp_force_outer"))
-        left_force_min = self._scalar(log_info.get("left_grasp_force_min"), default=min(left_force_inner, left_force_outer))
-        right_force_min = self._scalar(log_info.get("right_grasp_force_min"), default=min(right_force_inner, right_force_outer))
-        left_force_avg = self._scalar(log_info.get("left_grasp_force_avg"), default=0.5 * (left_force_inner + left_force_outer))
-        right_force_avg = self._scalar(log_info.get("right_grasp_force_avg"), default=0.5 * (right_force_inner + right_force_outer))
+        left_force_min = self._scalar(
+            log_info.get("left_grasp_force_min"), default=min(left_force_inner, left_force_outer)
+        )
+        right_force_min = self._scalar(
+            log_info.get("right_grasp_force_min"), default=min(right_force_inner, right_force_outer)
+        )
+        left_force_avg = self._scalar(
+            log_info.get("left_grasp_force_avg"), default=0.5 * (left_force_inner + left_force_outer)
+        )
+        right_force_avg = self._scalar(
+            log_info.get("right_grasp_force_avg"), default=0.5 * (right_force_inner + right_force_outer)
+        )
         left_contact_min = self._scalar(log_info.get("left_contact_min"))
         right_contact_min = self._scalar(log_info.get("right_contact_min"))
         left_contact_avg = self._scalar(log_info.get("left_contact_avg"))
@@ -1484,11 +1838,17 @@ class MotionContextTrainer(SequentialTrainer):
         right_grip_action = self._scalar(log_info.get("right_grip_action"))
         left_gripper_opening = self._scalar(log_info.get("left_gripper_opening"))
         right_gripper_opening = self._scalar(log_info.get("right_gripper_opening"))
-        left_local_grasp = self._scalar(log_info.get("left_local_grasp"), default=self._scalar(log_info.get("left_grasp_reward")))
-        right_local_grasp = self._scalar(log_info.get("right_local_grasp"), default=self._scalar(log_info.get("right_grasp_reward")))
+        left_local_grasp = self._scalar(
+            log_info.get("left_local_grasp"), default=self._scalar(log_info.get("left_grasp_reward"))
+        )
+        right_local_grasp = self._scalar(
+            log_info.get("right_local_grasp"), default=self._scalar(log_info.get("right_grasp_reward"))
+        )
         left_lift_reward_raw = self._scalar(log_info.get("left_lift_reward"))
         right_lift_reward_raw = self._scalar(log_info.get("right_lift_reward"))
-        secure_local = self._scalar(log_info.get("secure_local"), default=self._scalar(log_info.get("secure_bilateral")))
+        secure_local = self._scalar(
+            log_info.get("secure_local"), default=self._scalar(log_info.get("secure_bilateral"))
+        )
 
         left_obs_prev_gripper_action = self._scalar(log_info.get("left_obs_prev_gripper_action"))
         right_obs_prev_gripper_action = self._scalar(log_info.get("right_obs_prev_gripper_action"))
@@ -1541,10 +1901,14 @@ class MotionContextTrainer(SequentialTrainer):
         strict_success = self._scalar(log_info.get("strict_success_ratio"))
         secure_bi_min = self._scalar(log_info.get("secure_bi_min"), default=min(left_local_grasp, right_local_grasp))
         secure_bi_sqrt = self._scalar(log_info.get("secure_bi_sqrt"))
-        grasp_imbalance = self._scalar(log_info.get("grasp_imbalance"), default=abs(left_local_grasp - right_local_grasp))
+        grasp_imbalance = self._scalar(
+            log_info.get("grasp_imbalance"), default=abs(left_local_grasp - right_local_grasp)
+        )
         reward_gap = self._scalar(log_info.get("reward_gap"), default=abs(left_reward_total - right_reward_total))
         closure_gap = self._scalar(log_info.get("left_right_closure_gap"), default=abs(left_closure - right_closure))
-        contact_gap = self._scalar(log_info.get("left_right_contact_gap"), default=abs(left_contact_min - right_contact_min))
+        contact_gap = self._scalar(
+            log_info.get("left_right_contact_gap"), default=abs(left_contact_min - right_contact_min)
+        )
 
         if dual_grasp_ok < 0.5:
             bottleneck = "dual_grasp"
@@ -1685,6 +2049,36 @@ class MotionContextTrainer(SequentialTrainer):
 
         return shared_intents
 
+    def _mask_diagnostic_actor_states(self, states: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Zero only the received partner-message channels during evaluation."""
+
+        mask = self.diagnostic_mask
+        if mask == "none":
+            return states
+        communication_mode = str(self._resolve_env_attr("communication_mode", ""))
+        if communication_mode != "motion_context":
+            raise ValueError("--diagnostic_mask requires a motion_context environment and checkpoint.")
+        own_dim = int(self._resolve_env_attr("own_observation_dim", 30))
+        motion_dim = int(self._resolve_env_attr("motion_intent_dim", 3))
+        context_dim = int(self._resolve_env_attr("motion_context_dim", 3))
+        slot_dim = int(self._resolve_env_attr("communication_feature_dim", 30))
+        if mask == "motion_zero":
+            start, end = own_dim, own_dim + motion_dim
+        elif mask == "context_zero":
+            start, end = own_dim + motion_dim, own_dim + motion_dim + context_dim
+        elif mask == "message_zero":
+            start, end = own_dim, own_dim + slot_dim
+        else:
+            raise ValueError(f"Unknown diagnostic mask: {mask}")
+        masked = {}
+        for agent, agent_states in states.items():
+            if agent_states.shape[-1] < own_dim + slot_dim:
+                raise ValueError(f"{agent} actor state is too short for diagnostic masking: {agent_states.shape[-1]}")
+            masked_states = agent_states.clone()
+            masked_states[..., start:end] = 0.0
+            masked[agent] = masked_states
+        return masked
+
     def multi_agent_train(self) -> None:
         """Paper motion-context intent handoff를 포함한 multi-agent training loop를 실행한다."""
 
@@ -1721,7 +2115,11 @@ class MotionContextTrainer(SequentialTrainer):
                 shared_intents = self._apply_intent_share_strategy(
                     shared_intents, outputs, timestep, sharing_enabled, warmup_active
                 )
-                self.env.set_pending_intents(predicted_intents=shared_intents, policy_states=states)
+                self.env.set_pending_intents(
+                    predicted_intents=shared_intents,
+                    policy_states=states,
+                    current_actions=actions,
+                )
 
                 next_states, rewards, terminated, truncated, infos = self.env.step(actions)
                 shared_next_states = self.env.state()
@@ -1762,6 +2160,17 @@ class MotionContextTrainer(SequentialTrainer):
 
         assert self.num_simultaneous_agents == 1, "This method is not allowed for simultaneous agents"
         assert self.env.num_agents > 1, "This method is not allowed for single-agent"
+        communication_mode = str(self._resolve_env_attr("communication_mode", "motion_context"))
+        calibration_enabled = bool(self._resolve_env_attr("motion_context_calibration_enabled", True))
+        if (
+            communication_mode in ("context_only", "motion_context", "motion_context_la", "motion_context_s")
+            and calibration_enabled
+            and not bool(self._resolve_env_attr("_motion_context_calibrated", False))
+        ):
+            raise RuntimeError(
+                "Evaluation requires a checkpoint sidecar with completed adaptive Context calibration. "
+                "The loaded environment state is not calibrated."
+            )
         self._in_eval = True
         self._set_env_attr("training", False)
         self._set_env_attr("motion_context_update_scale", False)
@@ -1791,16 +2200,26 @@ class MotionContextTrainer(SequentialTrainer):
                 trace_getter = self._resolve_env_attr("get_paper_motion_context_trace_signals", None)
                 trace_env_index = int(max(0, min(self.mode_trace_env_index, self.env.num_envs - 1)))
                 pre_step_trace_signals = trace_getter(trace_env_index) if callable(trace_getter) else {}
-                outputs = self.agents.act(states, timestep=timestep, timesteps=self.timesteps)
+                if self.save_mode_trace and not self._mode_trace["left_motion_context"]:
+                    self._mode_trace["initial_physical_state"] = capture_physical_start(
+                        self._resolve_env_attr, trace_env_index
+                    )
+                    self._mode_trace["initial_physical_state_schema"] = "openarm_physical_state/wxyz_v1"
+                actor_states = self._mask_diagnostic_actor_states(states)
+                outputs = self.agents.act(actor_states, timestep=timestep, timesteps=self.timesteps)
                 shared_intents = {agent: outputs[2][agent]["intent"] for agent in outputs[2]}
                 shared_intents = self._apply_intent_share_strategy(
                     shared_intents, outputs[2], timestep, sharing_enabled, warmup_active
                 )
-                self.env.set_pending_intents(predicted_intents=shared_intents, policy_states=states)
                 actions = (
                     outputs[0]
                     if self.stochastic_evaluation
                     else {k: outputs[-1][k].get("mean_actions", outputs[0][k]) for k in outputs[-1]}
+                )
+                self.env.set_pending_intents(
+                    predicted_intents=shared_intents,
+                    policy_states=actor_states,
+                    current_actions=actions,
                 )
 
                 next_states, rewards, terminated, truncated, infos = self.env.step(actions)
@@ -1822,7 +2241,7 @@ class MotionContextTrainer(SequentialTrainer):
                     timestep=timestep,
                     timesteps=self.timesteps,
                 )
-                self._append_mode_trace(outputs[2], rewards, infos, pre_step_trace_signals)
+                self._append_mode_trace(outputs[2], rewards, infos, pre_step_trace_signals, actor_states)
                 self._update_episode_history(rewards, terminated, truncated)
                 self._emit_debug_summary(timestep, actions, outputs[2], infos)
 
@@ -1847,10 +2266,13 @@ class MotionContextTrainer(SequentialTrainer):
                 states = next_states
                 shared_states = shared_next_states
         if (
-            (self.num_trace_episodes <= 0 or self._mode_trace_episode_index < self.num_trace_episodes)
-            and self._mode_trace["left_motion_context"]
-        ):
+            self.num_trace_episodes <= 0 or self._mode_trace_episode_index < self.num_trace_episodes
+        ) and self._mode_trace["left_motion_context"]:
             self._save_mode_trace(
                 terminated_at_end=bool(self._mode_trace_last_done.get("terminated", False)),
                 truncated_at_end=bool(self._mode_trace_last_done.get("truncated", False)),
             )
+
+
+# Backward-compatible name for existing Hydra experiment metadata.
+PaperIntentTrainer = MotionContextTrainer

@@ -52,13 +52,14 @@ def select_motion_context(
         return trend
     if representation == "absolute_fixed":
         return motion_context_from_raw(
-            linear_speed, angular_speed, action_variation_ema, fixed_scale,
+            linear_speed,
+            angular_speed,
+            action_variation_ema,
+            fixed_scale,
             norm_max=absolute_norm_max,
         )
     angular_scale = max(float(twist_angular_scale), 1.0e-6)
-    return torch.nan_to_num(angular_velocity_base / angular_scale, nan=0.0, posinf=1.0, neginf=-1.0).clamp(
-        -1.0, 1.0
-    )
+    return torch.nan_to_num(angular_velocity_base / angular_scale, nan=0.0, posinf=1.0, neginf=-1.0).clamp(-1.0, 1.0)
 
 
 def full_action_variation(current_action: torch.Tensor, previous_action: torch.Tensor) -> torch.Tensor:
@@ -200,6 +201,7 @@ def _calibration_cfg(env) -> tuple[bool, int, float, int, float]:
     """Return the shared task-agnostic calibration configuration."""
 
     cfg = env.cfg
+
     def value(name: str, default):
         return getattr(env, name, getattr(cfg, name, default))
 
@@ -240,9 +242,7 @@ def ensure_motion_context_calibration_state(env) -> None:
         env._motion_context_calibrated = not enabled
     history = getattr(env, "_motion_context_calibration_history", None)
     if not isinstance(history, torch.Tensor) or tuple(history.shape) != (window, 3):
-        env._motion_context_calibration_history = torch.zeros(
-            (window, 3), device=env.device, dtype=torch.float32
-        )
+        env._motion_context_calibration_history = torch.zeros((window, 3), device=env.device, dtype=torch.float32)
         env._motion_context_calibration_history_index = 0
         env._motion_context_calibration_history_count = 0
     if not hasattr(env, "_motion_context_calibration_history_index"):
@@ -283,13 +283,17 @@ def update_motion_context_scale_and_calibration(
     if should_update and int(env._motion_context_scale_update_step) != int(current_step):
         beta = min(max(float(getattr(env.cfg, "motion_context_scale_beta", 0.99)), 0.0), 0.9999)
         quantile = min(max(float(getattr(env.cfg, "motion_context_scale_percentile", 0.90)), 0.0), 1.0)
-        batch_scale = torch.stack(
-            [
-                torch.quantile(torch.cat([left_raw[0], right_raw[0]], dim=0).flatten(), quantile),
-                torch.quantile(torch.cat([left_raw[1], right_raw[1]], dim=0).flatten(), quantile),
-                torch.quantile(torch.cat([left_raw[2], right_raw[2]], dim=0).flatten(), quantile),
-            ]
-        ).detach().clamp_min(1.0e-6)
+        batch_scale = (
+            torch.stack(
+                [
+                    torch.quantile(torch.cat([left_raw[0], right_raw[0]], dim=0).flatten(), quantile),
+                    torch.quantile(torch.cat([left_raw[1], right_raw[1]], dim=0).flatten(), quantile),
+                    torch.quantile(torch.cat([left_raw[2], right_raw[2]], dim=0).flatten(), quantile),
+                ]
+            )
+            .detach()
+            .clamp_min(1.0e-6)
+        )
         env._motion_context_running_scale.mul_(beta).add_(batch_scale, alpha=1.0 - beta)
         env._motion_context_scale_update_step = int(current_step)
 
@@ -359,8 +363,11 @@ def motion_context_calibration_diagnostics(env) -> dict[str, float | int | bool]
     return {
         "motion_context_calibration_enabled": enabled,
         "motion_context_calibrated": bool(env._motion_context_calibrated),
-        "motion_sharing_active": globally_enabled and mode in ("motion_only", "motion_context", "motion_context_la", "motion_context_s"),
-        "context_sharing_active": globally_enabled and mode in ("context_only", "motion_context", "motion_context_la", "motion_context_s") and calibrated,
+        "motion_sharing_active": globally_enabled
+        and mode in ("motion_only", "motion_context", "motion_context_la", "motion_context_s"),
+        "context_sharing_active": globally_enabled
+        and mode in ("context_only", "motion_context", "motion_context_la", "motion_context_s")
+        and calibrated,
         "calibration_cv_linear": float(cv[0]),
         "calibration_cv_angular": float(cv[1]),
         "calibration_cv_action_variation": float(cv[2]),

@@ -1,5 +1,24 @@
 # OpenArm Motion Context
 
+## Simulation research source
+
+The repository now also includes the current Lift, LiftWithBall, contact-grasp
+Circle Peg, experimental actor/control variants, evaluation tools, regressions,
+and pinned compatibility code. See [research setup](docs/RESEARCH_SETUP.md) for
+the Isaac Lab 3 / Newton source-overlay installer and the separate licensed USD
+asset requirements. Training logs and new large checkpoints are not uploaded.
+This source publication does not certify task success or Full 6D superiority.
+See [current research status and checks](docs/CURRENT_RESEARCH_STATUS.md) and
+[source/checkpoint provenance](docs/CURRENT_RESEARCH_PROVENANCE.json).
+
+The current controlled Lift/Peg comparison is documented in the
+[recovery protocol](scripts/studies/RECOVERY_PROTOCOL.rst): independently trained
+NoShare, MotionOnly, Signed Twist and Full6D Trend with the same Actor/Critic
+and own controller-state inputs. The 512-step configuration is an integration
+check, not a success-rate result.
+
+The following quick start is the independent **ROS deployment** workflow.
+
 OpenArm V1.0 bimanual deployment with decentralized MAPPO actors and a compact
 partner message: `[m_x, m_y, m_z, translation trend, rotation trend, stability trend]`.
 The Lift actor uses a 30D own observation and a 30-wide partner slot containing
@@ -109,9 +128,9 @@ The export loads both actors and normalizers, restores their saved settings,
 and writes `deployment/lift.yaml` plus three `lift_*_apriltag.yaml` files.
 Use `--validate-checkpoint` to validate without exporting. The older models
 in `artifacts/` are historical and are not validated for this adapter. This
-repository supplies deployment software; a compatible trained policy is a
-separate input. The historical simulation overlay is not a complete Isaac Lab
-3/Newton training distribution.
+repository supplies source software; a compatible trained policy is a separate
+input. The new research overlay includes the current task code, but licensed
+assets and the matching Isaac Lab installation remain separate inputs.
 
 ## Start cameras and run the policy
 

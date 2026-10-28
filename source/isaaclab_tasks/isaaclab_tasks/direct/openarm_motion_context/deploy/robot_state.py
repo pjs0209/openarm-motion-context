@@ -11,6 +11,7 @@ class ArmState:
     q_target: torch.Tensor
     target_initialized: bool = False
     gripper_closed: bool = False
+    gripper_position_command: float | None = None
     prev_action: torch.Tensor | None = None
     prev_ee_pos: torch.Tensor | None = None
     prev_ee_quat: torch.Tensor | None = None

@@ -104,9 +104,7 @@ def main(env_cfg) -> None:
 
         camera_paths = ctx.get("apriltag_camera_paths_by_env", [[]])[0]
         if len(camera_paths) != len(_CAMERA_MOUNT_PRIMS):
-            raise RuntimeError(
-                f"Expected {len(_CAMERA_MOUNT_PRIMS)} runtime camera prims, got {len(camera_paths)}"
-            )
+            raise RuntimeError(f"Expected {len(_CAMERA_MOUNT_PRIMS)} runtime camera prims, got {len(camera_paths)}")
         robot_root = "/World/envs/env_0/Robot"
         for (camera_name, mount_prim), camera_path in zip(_CAMERA_MOUNT_PRIMS.items(), camera_paths):
             mount_path = f"{robot_root}/{mount_prim}"

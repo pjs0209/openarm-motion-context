@@ -108,7 +108,9 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         self.motion_intent_dim = int(motion_intent_dim)
         self.motion_context_dim = int(motion_context_dim)
         default_message_dim = self.motion_intent_dim + self.motion_context_dim
-        self.communication_feature_dim = int(communication_feature_dim if communication_feature_dim is not None else default_message_dim)
+        self.communication_feature_dim = int(
+            communication_feature_dim if communication_feature_dim is not None else default_message_dim
+        )
         self.intent_feature_dim = self.communication_feature_dim
         # Every ablation keeps the same fixed-width actor slot. ``none``
         # nevertheless bypasses the partner encoder entirely.
@@ -172,7 +174,9 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         own = states[..., : self.own_observation_dim]
         partner = states[..., self.own_observation_dim : self.own_observation_dim + self.intent_feature_dim]
         if partner.shape[-1] != self.intent_feature_dim:
-            partner = torch.zeros((*states.shape[:-1], self.intent_feature_dim), device=states.device, dtype=states.dtype)
+            partner = torch.zeros(
+                (*states.shape[:-1], self.intent_feature_dim), device=states.device, dtype=states.dtype
+            )
         return own, partner
 
     def _format_motion_intent(self, motion_intent, hidden: torch.Tensor) -> torch.Tensor:
@@ -223,7 +227,9 @@ class MotionContextPolicyModel(GaussianMixin, Model):
                 self.motion_intent_dim : self.motion_intent_dim + self.motion_context_dim,
             ]
         else:
-            motion_context = torch.zeros((hidden.shape[0], self.motion_context_dim), device=hidden.device, dtype=hidden.dtype)
+            motion_context = torch.zeros(
+                (hidden.shape[0], self.motion_context_dim), device=hidden.device, dtype=hidden.dtype
+            )
         shared_intent = actor_partner_intent
         if motion_intent.shape[-1] != self.motion_intent_dim:
             raise RuntimeError("Invalid motion intent dimension")
@@ -259,9 +265,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
             target_delta_b = own_for_gripper[..., 22:25]
             closure = own_for_gripper[..., 26:27]
             ee_lin_vel_b = own_for_gripper[..., 27:30]
-            gripper_actor_input = _gripper_actor_input(
-                hidden, partner_intent_feat, self.gripper_partner_local_only
-            )
+            gripper_actor_input = _gripper_actor_input(hidden, partner_intent_feat, self.gripper_partner_local_only)
             gripper_features = torch.cat([gripper_actor_input, closure, target_delta_b, ee_lin_vel_b], dim=-1)
             if gripper_features.shape[-1] != self.gripper_head_input_dim:
                 raise RuntimeError("Invalid gripper head input dimension")
@@ -399,8 +403,7 @@ class MotionContextMAPPO(MAPPO):
 
     def write_checkpoint(self, timestep: int, timesteps: int) -> None:
         best_pending = bool(
-            self.checkpoint_best_modules.get("modules")
-            and not self.checkpoint_best_modules.get("saved", True)
+            self.checkpoint_best_modules.get("modules") and not self.checkpoint_best_modules.get("saved", True)
         )
         super().write_checkpoint(timestep, timesteps)
 
@@ -479,7 +482,9 @@ class MotionContextMAPPO(MAPPO):
             return flat_states.reshape(batch_size, sequence_length, obs_dim)
         return self._state_preprocessor[uid](states, train=train)
 
-    def _update_context_debug(self, uid: str, outputs: dict[str, torch.Tensor], losses: dict[str, float] | None = None) -> None:
+    def _update_context_debug(
+        self, uid: str, outputs: dict[str, torch.Tensor], losses: dict[str, float] | None = None
+    ) -> None:
         """console log와 JSON trace metadata에 쓰는 agent별 context stats를 갱신한다."""
 
         del losses
@@ -775,8 +780,10 @@ class MotionContextMAPPO(MAPPO):
                         self.scaler.unscale_(self.optimizers[uid])
                         policy = update_data[uid]["policy"]
                         value_model = update_data[uid]["value_model"]
-                        params = list(policy.parameters()) if policy is value_model else list(
-                            itertools.chain(policy.parameters(), value_model.parameters())
+                        params = (
+                            list(policy.parameters())
+                            if policy is value_model
+                            else list(itertools.chain(policy.parameters(), value_model.parameters()))
                         )
                         nn.utils.clip_grad_norm_(params, self._grad_norm_clip[uid])
                     self.scaler.step(self.optimizers[uid])
@@ -867,8 +874,12 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     if intent_horizon != 1:
         raise RuntimeError("Paper motion-context intent expects intent_horizon=1.")
     motion_intent_dim = int(getattr(task_env, "motion_intent_dim", cfg["models"]["policy"].get("motion_intent_dim", 3)))
-    motion_context_dim = int(getattr(task_env, "motion_context_dim", cfg["models"]["policy"].get("motion_context_dim", 3)))
-    communication_feature_dim = int(getattr(task_env, "communication_feature_dim", getattr(task_env, "intent_feature_dim", 0)))
+    motion_context_dim = int(
+        getattr(task_env, "motion_context_dim", cfg["models"]["policy"].get("motion_context_dim", 3))
+    )
+    communication_feature_dim = int(
+        getattr(task_env, "communication_feature_dim", getattr(task_env, "intent_feature_dim", 0))
+    )
     arm_only_actions = bool(getattr(task_env.cfg, "arm_only_actions", False))
     intent_feature_dim = communication_feature_dim
     own_observation_dim = int(
@@ -886,9 +897,15 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
         actor_action_input_dim += partner_intent_embed_dim
     gripper_head_input_dim = 0 if arm_only_actions else actor_action_input_dim + 7
     for agent_id in possible_agents:
-        obs_dim = observation_spaces[agent_id].shape[0] if hasattr(observation_spaces[agent_id], "shape") else int(observation_spaces[agent_id])
+        obs_dim = (
+            observation_spaces[agent_id].shape[0]
+            if hasattr(observation_spaces[agent_id], "shape")
+            else int(observation_spaces[agent_id])
+        )
         if obs_dim != expected_actor_dim:
-            raise RuntimeError(f"{communication_mode} actor observation dim must be {expected_actor_dim}, got {obs_dim}")
+            raise RuntimeError(
+                f"{communication_mode} actor observation dim must be {expected_actor_dim}, got {obs_dim}"
+            )
 
     print(f"[INFO] communication_mode={communication_mode}")
     print(f"[INFO] own_obs_dim={own_observation_dim}")
@@ -905,7 +922,7 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     print("[INFO] actor_backbone=agent_specific")
     print("[INFO] action_heads=agent_specific")
     print("[INFO] proposed z=[base_frame_signed_EE_motion_3D, selected_proprioceptive_context_3D]")
-    print("[INFO] communication_mode=none is the no-share baseline.")
+    print("[INFO] Matched NoShare uses sharing_mode=no_share with the partner encoder retained.")
 
     models = {}
     memories = {}
