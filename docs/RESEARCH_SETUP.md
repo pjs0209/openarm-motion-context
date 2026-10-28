@@ -80,6 +80,35 @@ dependency walk does not certify all of them. The local legacy `openarm_robot.us
 also contains an unresolved configuration-layer reference. This publication does
 not repair assets or silently replace their collision geometry.
 
+## Current controlled Lift/Peg comparison
+
+The current main comparison is defined by
+[`message_comparison_preflight.json`](../scripts/studies/message_comparison_preflight.json)
+and the [recovery protocol](../scripts/studies/RECOVERY_PROTOCOL.rst).
+It trains NoShare, MotionOnly, Signed Twist and Full6D Trend independently with
+the same Actor/Critic, partner encoder, own controller-state inputs and common
+task settings. Historical experimental gates/decoders remain separate. The
+preflight uses eight worlds and 512 control steps per condition. Its Peg profile
+uses a common 10 N finger effort cap as a sensitivity experiment; it is not a
+hardware calibration or a performance comparison with older 333.33 N runs.
+
+From the receiving Isaac Lab checkout, first declare commands without launching:
+
+```bash
+uv run --no-project python scripts/studies/run_message_comparison.py \
+  --manifest scripts/studies/message_comparison_preflight.json \
+  --output logs/current/message_comparison_declaration
+```
+
+Use another new output directory and add `--execute` to launch the preflight.
+Every run saves actual model shapes, counts and initial hashes. The runner
+compares saved environment/agent settings and actual initial Actor/Critic states
+across the four conditions, allowing only declared message and run-name fields.
+This snapshot connects `select_motion_context` to both actual task-logic paths,
+updates accumulated targets once per control step in `_pre_physics_step`, and
+keeps `_apply_action` for substep command submission. Contact Peg is the free-body
+eight-action task ID; historical welded seven-action IDs remain separate.
+
 ## Train and replay
 
 Run these from the receiving Isaac Lab checkout after setup and asset preparation:

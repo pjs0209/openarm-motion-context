@@ -118,7 +118,10 @@ def install_grasp_reset_curriculum(env, warm_until=10000, normal_from=40000):
     task = getattr(env, "unwrapped", env)
     if hasattr(task, "_grasp_curriculum_profile"):
         raise ValueError("Lift reset curriculum is already installed")
-    if task.cfg.intent_task_label != "openarm_lift" or task.own_observation_dim != 33:
+    if (
+        task.cfg.intent_task_label != "openarm_lift"
+        or task.own_observation_dim - getattr(task.cfg, "control_state_observation_dim", 0) != 33
+    ):
         raise ValueError("Reset curriculum requires the signed camera-rotation plain Lift task")
     if not isinstance(task.cfg.sim.physics, NewtonCfg):
         raise ValueError("This reset curriculum is validated only for the Newton Lift profile")

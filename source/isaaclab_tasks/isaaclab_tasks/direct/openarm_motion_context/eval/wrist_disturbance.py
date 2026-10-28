@@ -19,6 +19,8 @@ from types import MethodType
 import torch
 
 from ..legacy_api import read_data, tensor
+from .control_timing import ControlTimingAudit
+from .physical_audit import PhysicalAudit
 
 PROTOCOL = "openarm_wrist_pulse/v1"
 
@@ -114,6 +116,8 @@ class WristDisturbance:
         self.tick, self.pending, self.records = 0, False, []
         self.episode = -1
         self._stream = (self.directory / "wrist_disturbance_substeps.jsonl").open("x")
+        self.audit = ControlTimingAudit(task, self.directory)
+        self.physical_audit = PhysicalAudit(task, self.directory, self)
         self._original_apply = task._apply_action
         self._original_reset = task._reset_idx
         self._original_write = task.robot.write_data_to_sim
@@ -211,7 +215,9 @@ class WristDisturbance:
                     "status": status,
                     "schedule": self.schedule,
                     "application": "world-frame force at selected wrist link center of mass; zero external torque",
-                    "input_readback": "Newton body_f after asset submission, before solver integration; force XYZ then torque XYZ",
+                    "input_readback": (
+                        "Newton body_f after asset submission, before solver integration; force XYZ then torque XYZ"
+                    ),
                     "solver_num_substeps": self.task.cfg.sim.physics.num_substeps,
                     "episodes": self.records,
                 },
@@ -223,6 +229,8 @@ class WristDisturbance:
 
     def close(self, completed: bool):
         self._stream.close()
+        self.audit.close()
+        self.physical_audit.close()
         self._write_summary("complete" if completed and not self.pending else "incomplete")
         self.task._apply_action = self._original_apply
         self.task._reset_idx = self._original_reset

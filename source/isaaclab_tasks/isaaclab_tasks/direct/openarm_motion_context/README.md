@@ -3,6 +3,21 @@
 This package contains the Isaac Lab implementation of Proprioceptive Motion
 Context Sharing for OpenArm bimanual manipulation.
 
+## Current main comparison
+
+The Lift/Peg recovery study uses the common own-controller-state Actor/Critic
+builder in `models/main_comparison.py`. Its four independently trained conditions
+are NoShare, MotionOnly, Signed Twist and Full6D Trend. NoShare retains the partner
+encoder and receives zeros from training start. Historical gate/decoder/control
+variants elsewhere in this package are separate experiments.
+
+The maintained configuration is
+`scripts/studies/message_comparison_preflight.json` at the Isaac Lab checkout root;
+the protocol and actual checks are described in `scripts/studies/RECOVERY_PROTOCOL.rst`.
+The 512-step configuration checks integration and matched settings; it is not a
+task-success result. Simulation observations with the optional own-control-state
+inputs require a matching observation implementation before real deployment.
+
 - `envs`: Isaac Lab task definitions and reward/state logic.
 - `perception`: AprilTag transforms, multi-camera fusion, and grasp targets.
 - `communication`: signed EE motion, motion context, and message construction.

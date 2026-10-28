@@ -922,7 +922,7 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     print("[INFO] actor_backbone=agent_specific")
     print("[INFO] action_heads=agent_specific")
     print("[INFO] proposed z=[base_frame_signed_EE_motion_3D, selected_proprioceptive_context_3D]")
-    print("[INFO] communication_mode=none is the no-share baseline.")
+    print("[INFO] Matched NoShare uses sharing_mode=no_share with the partner encoder retained.")
 
     models = {}
     memories = {}

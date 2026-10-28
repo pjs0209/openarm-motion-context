@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import torch
 
+from .control_state_observation import control_state_observation
+
 from isaaclab_tasks.direct.openarm_motion_context.legacy_math import (
     combine_frame_transforms,
     matrix_from_quat,
@@ -517,6 +519,8 @@ def _agent_observation(env, ctx: dict, side: str) -> torch.Tensor:
         ee_lin_vel_b,
     ]
 
+    if getattr(env.cfg, "observe_control_state", False):
+        obs_parts.append(control_state_observation(env, side, joint_pos))
     own = torch.nan_to_num(torch.cat(obs_parts, dim=-1), nan=0.0, posinf=0.0, neginf=0.0)
     expected_dim = int(getattr(env, "own_observation_dim", getattr(env.cfg, "own_observation_dim", 30)))
     if own.shape[-1] != expected_dim:
@@ -1243,7 +1247,12 @@ def collect_openarm_re_trace_signals(env, ctx: dict, env_index: int = 0) -> dict
     right_closure = obs_scalar(right_own, 26)
     motion_context = getattr(env, "_motion_context_last_generated", None)
     if not isinstance(motion_context, dict):
-        motion_context = compute_openarm_re_motion_contexts(env, ctx)
+        # Before the first handoff after reset there is no generated context.
+        # Trace reads must not advance EMA/history or action-variation validity.
+        motion_context = {
+            "left_arm": left_own.new_zeros((env.num_envs, 3)),
+            "right_arm": right_own.new_zeros((env.num_envs, 3)),
+        }
     left_context = motion_context["left_arm"][idx].detach().float().cpu().tolist()
     right_context = motion_context["right_arm"][idx].detach().float().cpu().tolist()
     keypoint_dist, keypoint_rewards = _compute_factory_keypoint_reward(env, metrics)

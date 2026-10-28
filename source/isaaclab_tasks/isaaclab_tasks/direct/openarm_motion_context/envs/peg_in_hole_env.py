@@ -35,6 +35,7 @@ from .peg_in_hole_task_logic import (
 )
 from .robot_cfg import OPENARM_ENVIRONMENT_ASSET_DIR, OPEN_ARM_HIGH_PD_CFG
 from .gripper_control import update_gripper_command
+from .control_state_observation import CONTROL_STATE_DIM
 from .backend_cfg import OpenArmPhysicsCfg, configure_openarm_contact_capacity
 from .newton_assets import spawn_openarm_scene
 from isaaclab_tasks.direct.openarm_motion_context.legacy_api import (
@@ -170,6 +171,8 @@ class OpenArmPegInHoleEnvCfg(DirectMARLEnvCfg):
     gripper_extra_obs_dim = 4
     use_gripper_proprio_obs = True
     own_observation_dim = 30
+    observe_control_state: bool = False
+    control_state_observation_dim: int = 0
     actor_input_dim = 60
     intent_task_label = "openarm_peg_in_hole"
     observation_spaces = {"left_arm": 60, "right_arm": 60}
@@ -292,11 +295,19 @@ class OpenArmPegInHoleEnvCfg(DirectMARLEnvCfg):
         if int(self.motion_intent_dim) != 3 or int(self.motion_context_dim) != 3:
             raise ValueError("OpenArmPegInHole paper communication requires motion 3D + context 3D.")
 
-        self.own_observation_dim = self.base_own_obs_dim + (
-            self.gripper_extra_obs_dim if self.use_gripper_proprio_obs else 0
+        if not isinstance(self.observe_control_state, bool):
+            raise ValueError("observe_control_state must be boolean")
+        self.control_state_observation_dim = CONTROL_STATE_DIM if self.observe_control_state else 0
+        self.own_observation_dim = (
+            self.base_own_obs_dim
+            + (self.gripper_extra_obs_dim if self.use_gripper_proprio_obs else 0)
+            + self.control_state_observation_dim
         )
-        if self.own_observation_dim != 30:
-            raise ValueError(f"OpenArmPegInHole own_observation_dim must be 30, got {self.own_observation_dim}.")
+        expected_own = 30 + self.control_state_observation_dim
+        if self.own_observation_dim != expected_own:
+            raise ValueError(
+                f"OpenArmPegInHole own_observation_dim must be {expected_own}, got {self.own_observation_dim}."
+            )
         self.communication_feature_dim = int(self.own_observation_dim)
         # Compatibility aliases for shared scripts/checkpoint metadata.
         self.intent_feature_dim = self.communication_feature_dim
@@ -344,7 +355,7 @@ class OpenArmPegInHoleEnv(DirectMARLEnv):
         self.motion_context_update_scale = bool(self.cfg.motion_context_update_scale)
         expected_actor_dim = self.own_observation_dim + self.intent_horizon * self.communication_feature_dim
         if (
-            self.own_observation_dim != 30
+            self.own_observation_dim != 30 + self.cfg.control_state_observation_dim
             or self.intent_feature_dim != self.communication_feature_dim
             or self.actor_partner_intent_dim != self.communication_feature_dim
             or self.actor_input_dim != expected_actor_dim

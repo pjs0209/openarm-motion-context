@@ -1,0 +1,641 @@
+{
+  "upstream_isaaclab_commit": "e3f7d9ff1f5d7f8280de3ece9000b7117f66bcf4",
+  "publication_base_commit": "10fc0a4c77b7d1252854491237552976dd55d634",
+  "campaign_name": "common_messages_preflight_v1",
+  "scope": "512-step fresh training integration check; not performance evidence. Peg uses a declared 10 N finger effort sensitivity profile, not hardware calibration.",
+  "training_status": "complete",
+  "source_relation": "Python executable ASTs match the actual archived training sources, excluding docstrings and positions; YAML defaults match byte-for-byte. Publication formatting can change raw file hashes.",
+  "cases": [
+    {
+      "name": "common_messages_preflight_v1_lift_noshare_seed42",
+      "task": "lift",
+      "condition": "noshare",
+      "seed": 42,
+      "checkpoint_sha256": "35c3a3c953e9f8951bb99b3bfca8bcf94a7064de2c9743be6ffa8637a56acb42",
+      "common_configuration_and_initial_models_match": true
+    },
+    {
+      "name": "common_messages_preflight_v1_lift_motiononly_seed42",
+      "task": "lift",
+      "condition": "motiononly",
+      "seed": 42,
+      "checkpoint_sha256": "33090b94eaabf5d4ae0cbd09c7c4aa42a2fd31dc408e28e8d7c969dc4951bd51",
+      "common_configuration_and_initial_models_match": true
+    },
+    {
+      "name": "common_messages_preflight_v1_lift_signedtwist_seed42",
+      "task": "lift",
+      "condition": "signedtwist",
+      "seed": 42,
+      "checkpoint_sha256": "4f4f76923c6f78e4e7496fc4874704d7d185f7d8ff510e0afe6d6437ece32d97",
+      "common_configuration_and_initial_models_match": true
+    },
+    {
+      "name": "common_messages_preflight_v1_lift_full6d_seed42",
+      "task": "lift",
+      "condition": "full6d",
+      "seed": 42,
+      "checkpoint_sha256": "e6f1def758ba4ad4ca61626cab06eb21fc2e3843ff1a2765a6acce41c91134e4",
+      "common_configuration_and_initial_models_match": true
+    },
+    {
+      "name": "common_messages_preflight_v1_peg_noshare_seed42",
+      "task": "peg",
+      "condition": "noshare",
+      "seed": 42,
+      "checkpoint_sha256": "9dcdfae9b08fac07d9a348c85a32d01559ff1b2209041b445b2fc4c09f1adb4f",
+      "common_configuration_and_initial_models_match": true
+    },
+    {
+      "name": "common_messages_preflight_v1_peg_motiononly_seed42",
+      "task": "peg",
+      "condition": "motiononly",
+      "seed": 42,
+      "checkpoint_sha256": "f23617204d6168692072260edc35a6663b10df66079ea47e90cd9421dfdb4536",
+      "common_configuration_and_initial_models_match": true
+    },
+    {
+      "name": "common_messages_preflight_v1_peg_signedtwist_seed42",
+      "task": "peg",
+      "condition": "signedtwist",
+      "seed": 42,
+      "checkpoint_sha256": "1587b5776b1c5067510fd4701535b9737bc2bc6945aa0abbc9b9cadf785f5652",
+      "common_configuration_and_initial_models_match": true
+    },
+    {
+      "name": "common_messages_preflight_v1_peg_full6d_seed42",
+      "task": "peg",
+      "condition": "full6d",
+      "seed": 42,
+      "checkpoint_sha256": "6e51bfc8ab5c6183da91def8e52d286f1ad2a63724f240f16661d62186e7d156",
+      "common_configuration_and_initial_models_match": true
+    }
+  ],
+  "files": {
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/__init__.py": {
+      "training_sha256": "855a814abdf94545bf0c23ff4a592bdd4c64450a9f1a657549223075195b2c62",
+      "published_sha256": "855a814abdf94545bf0c23ff4a592bdd4c64450a9f1a657549223075195b2c62",
+      "installed_receiver_sha256": "855a814abdf94545bf0c23ff4a592bdd4c64450a9f1a657549223075195b2c62"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/camera_pose/__init__.py": {
+      "training_sha256": "42a590c4e313c4beeb4825b8a75ba8b1831aaa60f6c62a32e111c366eea366cd",
+      "published_sha256": "42a590c4e313c4beeb4825b8a75ba8b1831aaa60f6c62a32e111c366eea366cd",
+      "installed_receiver_sha256": "42a590c4e313c4beeb4825b8a75ba8b1831aaa60f6c62a32e111c366eea366cd"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/camera_pose/envs.py": {
+      "training_sha256": "57983f80d2925f0a252959b99371e6d9b46251d84f7063fd85e9488493f1023f",
+      "published_sha256": "57983f80d2925f0a252959b99371e6d9b46251d84f7063fd85e9488493f1023f",
+      "installed_receiver_sha256": "57983f80d2925f0a252959b99371e6d9b46251d84f7063fd85e9488493f1023f"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/camera_pose/runtime.py": {
+      "training_sha256": "e3bc055515d4d33cf7ec8813edbc96ed6f6ba7cf436e489ba27a9cb7c3889b7c",
+      "published_sha256": "e001bc89b075ae58869c3d1fca27ddc3c776b7a7f25ba4e27428703f589ab9de",
+      "installed_receiver_sha256": "e001bc89b075ae58869c3d1fca27ddc3c776b7a7f25ba4e27428703f589ab9de"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/common/__init__.py": {
+      "training_sha256": "5b2fed84bf54d788362d85f1b8d10d13d63a0e9549c75a82a1aaa0ed23ca57f9",
+      "published_sha256": "5b2fed84bf54d788362d85f1b8d10d13d63a0e9549c75a82a1aaa0ed23ca57f9",
+      "installed_receiver_sha256": "5b2fed84bf54d788362d85f1b8d10d13d63a0e9549c75a82a1aaa0ed23ca57f9"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/common/action.py": {
+      "training_sha256": "b463e10ffdac391fc634cb564490df98e6df09b792da68bdc422b0c479a93195",
+      "published_sha256": "b463e10ffdac391fc634cb564490df98e6df09b792da68bdc422b0c479a93195",
+      "installed_receiver_sha256": "b463e10ffdac391fc634cb564490df98e6df09b792da68bdc422b0c479a93195"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/common/observation.py": {
+      "training_sha256": "0f230277aa4ff8eaa02ac3b7b4a65f1b02eba605e1863a017931f6f198f05aa7",
+      "published_sha256": "0f230277aa4ff8eaa02ac3b7b4a65f1b02eba605e1863a017931f6f198f05aa7",
+      "installed_receiver_sha256": "0f230277aa4ff8eaa02ac3b7b4a65f1b02eba605e1863a017931f6f198f05aa7"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/common/transforms.py": {
+      "training_sha256": "dad36663485af1e86e58de95cac62ac073bdfab0c47512f46a161b3c4681dc5e",
+      "published_sha256": "dad36663485af1e86e58de95cac62ac073bdfab0c47512f46a161b3c4681dc5e",
+      "installed_receiver_sha256": "dad36663485af1e86e58de95cac62ac073bdfab0c47512f46a161b3c4681dc5e"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/communication/__init__.py": {
+      "training_sha256": "aa3aedbdd518a22d991e1297cdac33431194d743aa0d860c96a2477f2895b7e8",
+      "published_sha256": "aa3aedbdd518a22d991e1297cdac33431194d743aa0d860c96a2477f2895b7e8",
+      "installed_receiver_sha256": "aa3aedbdd518a22d991e1297cdac33431194d743aa0d860c96a2477f2895b7e8"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/communication/message_builder.py": {
+      "training_sha256": "47af4670d007f8c80625f51109e06df98fa56e7592f31036dce7d0208a522109",
+      "published_sha256": "723ff555ffc812d75dbdd8a2b2f61d0d96210edf491f106f1b1fa11f99a012c4",
+      "installed_receiver_sha256": "723ff555ffc812d75dbdd8a2b2f61d0d96210edf491f106f1b1fa11f99a012c4"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/communication/motion.py": {
+      "training_sha256": "95d9e2c8d1b401ddd88ddf9e9a435098fc60c859f67e886785051c735034e0c0",
+      "published_sha256": "95d9e2c8d1b401ddd88ddf9e9a435098fc60c859f67e886785051c735034e0c0",
+      "installed_receiver_sha256": "95d9e2c8d1b401ddd88ddf9e9a435098fc60c859f67e886785051c735034e0c0"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/communication/motion_context.py": {
+      "training_sha256": "e961836886da141af84f942dbf738676caa4a184f82121cabe3a2ee0a5bbf590",
+      "published_sha256": "fe5dcafcd04d6e47e7127004bf5a377de2d24d33ecd4cfbc7970dca58de843f2",
+      "installed_receiver_sha256": "fe5dcafcd04d6e47e7127004bf5a377de2d24d33ecd4cfbc7970dca58de843f2"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/__init__.py": {
+      "training_sha256": "a1879e4aca38f06211f9a9475ecd753fb7bfa5121699a969017691f9ff18ec67",
+      "published_sha256": "a1879e4aca38f06211f9a9475ecd753fb7bfa5121699a969017691f9ff18ec67",
+      "installed_receiver_sha256": "a1879e4aca38f06211f9a9475ecd753fb7bfa5121699a969017691f9ff18ec67"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/apriltag_example.py": {
+      "training_sha256": "1080d6e52fdbb4388144d865d37c2ace6e1f60762783a7e164ff748a0cf99cbe",
+      "published_sha256": "1080d6e52fdbb4388144d865d37c2ace6e1f60762783a7e164ff748a0cf99cbe",
+      "installed_receiver_sha256": "1080d6e52fdbb4388144d865d37c2ace6e1f60762783a7e164ff748a0cf99cbe"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/apriltag_ros.py": {
+      "training_sha256": "21b6b3e84da80a112ba6cab3855d390d423596ddb7f87c71a93e003ca07259e7",
+      "published_sha256": "21b6b3e84da80a112ba6cab3855d390d423596ddb7f87c71a93e003ca07259e7",
+      "installed_receiver_sha256": "21b6b3e84da80a112ba6cab3855d390d423596ddb7f87c71a93e003ca07259e7"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/calibration.py": {
+      "training_sha256": "3a996fb71f14f5998e149ec994b0b6a78811cb068a662c7e34bc79632e27c05b",
+      "published_sha256": "4cc75117324d819fb5c12f5e57a02855268f13ec57fbbbcfd36b0ff46e499dbb",
+      "installed_receiver_sha256": "4cc75117324d819fb5c12f5e57a02855268f13ec57fbbbcfd36b0ff46e499dbb"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/camera_tf_check.py": {
+      "training_sha256": "4f26d349d2dabdb64af1d72678954699ae99a8df792fda82cb4e7a95b6ca754f",
+      "published_sha256": "4f26d349d2dabdb64af1d72678954699ae99a8df792fda82cb4e7a95b6ca754f",
+      "installed_receiver_sha256": "4f26d349d2dabdb64af1d72678954699ae99a8df792fda82cb4e7a95b6ca754f"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/__init__.py": {
+      "training_sha256": "48810aa61df7a3b36eda965a41947cb3eacabfb4a52fb7785e0585a88d8b1f6c",
+      "published_sha256": "48810aa61df7a3b36eda965a41947cb3eacabfb4a52fb7785e0585a88d8b1f6c",
+      "installed_receiver_sha256": "48810aa61df7a3b36eda965a41947cb3eacabfb4a52fb7785e0585a88d8b1f6c"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/contract.py": {
+      "training_sha256": "955bfb426ffa28ade894b9510618eaf5014b38c7a24d3d15faf65998011eb51e",
+      "published_sha256": "955bfb426ffa28ade894b9510618eaf5014b38c7a24d3d15faf65998011eb51e",
+      "installed_receiver_sha256": "955bfb426ffa28ade894b9510618eaf5014b38c7a24d3d15faf65998011eb51e"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/controller.py": {
+      "training_sha256": "f9bd1e552fa02dc5ed5035a03292d6530f4ddc71cd9a5ab9ea1f7570b9fc707f",
+      "published_sha256": "f9bd1e552fa02dc5ed5035a03292d6530f4ddc71cd9a5ab9ea1f7570b9fc707f",
+      "installed_receiver_sha256": "f9bd1e552fa02dc5ed5035a03292d6530f4ddc71cd9a5ab9ea1f7570b9fc707f"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/deploy_node.py": {
+      "training_sha256": "cb55628ed661f9b68309a13ecb05d1ca7041b8753c60e1a0cda7cd9b83cecba1",
+      "published_sha256": "cb55628ed661f9b68309a13ecb05d1ca7041b8753c60e1a0cda7cd9b83cecba1",
+      "installed_receiver_sha256": "cb55628ed661f9b68309a13ecb05d1ca7041b8753c60e1a0cda7cd9b83cecba1"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/observation.py": {
+      "training_sha256": "dcd06563b3b02dd069d2577230f5f979971984b7c0f27c23317d9fd2556d0624",
+      "published_sha256": "dcd06563b3b02dd069d2577230f5f979971984b7c0f27c23317d9fd2556d0624",
+      "installed_receiver_sha256": "dcd06563b3b02dd069d2577230f5f979971984b7c0f27c23317d9fd2556d0624"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/robot_state.py": {
+      "training_sha256": "105daeab4fccdead20612392cbc7fd534affb8aadb867d17bccf6a8e46523112",
+      "published_sha256": "105daeab4fccdead20612392cbc7fd534affb8aadb867d17bccf6a8e46523112",
+      "installed_receiver_sha256": "105daeab4fccdead20612392cbc7fd534affb8aadb867d17bccf6a8e46523112"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/safety.py": {
+      "training_sha256": "553e22e0e62bb36411342d6978d04fe9b383417c74991c502d8ed46984ab1045",
+      "published_sha256": "553e22e0e62bb36411342d6978d04fe9b383417c74991c502d8ed46984ab1045",
+      "installed_receiver_sha256": "553e22e0e62bb36411342d6978d04fe9b383417c74991c502d8ed46984ab1045"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/task_start.py": {
+      "training_sha256": "5b04964005a50a2ab3a71f238f940fd28e26acd72a840f5a4f8dbdbea1a37cec",
+      "published_sha256": "5b04964005a50a2ab3a71f238f940fd28e26acd72a840f5a4f8dbdbea1a37cec",
+      "installed_receiver_sha256": "5b04964005a50a2ab3a71f238f940fd28e26acd72a840f5a4f8dbdbea1a37cec"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/telemetry.py": {
+      "training_sha256": "c622f70b9d76a5a77d863b0eeb6480f8f6ebda36d61670669c4e44da1f717dc2",
+      "published_sha256": "c622f70b9d76a5a77d863b0eeb6480f8f6ebda36d61670669c4e44da1f717dc2",
+      "installed_receiver_sha256": "c622f70b9d76a5a77d863b0eeb6480f8f6ebda36d61670669c4e44da1f717dc2"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/visualization.py": {
+      "training_sha256": "5493f104140555e589de6f669063bb66e0e052ecc2b0d862f94fd77022bb723a",
+      "published_sha256": "5493f104140555e589de6f669063bb66e0e052ecc2b0d862f94fd77022bb723a",
+      "installed_receiver_sha256": "5493f104140555e589de6f669063bb66e0e052ecc2b0d862f94fd77022bb723a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/__init__.py": {
+      "training_sha256": "543e0549e182ba085b2a7eb9e10a35689f3787903b196e67df895dd22d8569e9",
+      "published_sha256": "543e0549e182ba085b2a7eb9e10a35689f3787903b196e67df895dd22d8569e9",
+      "installed_receiver_sha256": "543e0549e182ba085b2a7eb9e10a35689f3787903b196e67df895dd22d8569e9"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/arm_reference_rate.py": {
+      "training_sha256": "b6343b58be7acd5c6bf658da776754385b63b0172b0e9737a0886c76ac93ca80",
+      "published_sha256": "b6343b58be7acd5c6bf658da776754385b63b0172b0e9737a0886c76ac93ca80",
+      "installed_receiver_sha256": "b6343b58be7acd5c6bf658da776754385b63b0172b0e9737a0886c76ac93ca80"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/arm_target_bounds.py": {
+      "training_sha256": "34a23b3a448eeb36781591ec38d92466a73e47429b0e819b5cef70307bab6045",
+      "published_sha256": "34a23b3a448eeb36781591ec38d92466a73e47429b0e819b5cef70307bab6045",
+      "installed_receiver_sha256": "34a23b3a448eeb36781591ec38d92466a73e47429b0e819b5cef70307bab6045"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/backend_cfg.py": {
+      "training_sha256": "9d76bb34f670e582cf9851add2ed36ba61de6f3582dc372fbdfd4a2cddee0ce0",
+      "published_sha256": "9d76bb34f670e582cf9851add2ed36ba61de6f3582dc372fbdfd4a2cddee0ce0",
+      "installed_receiver_sha256": "9d76bb34f670e582cf9851add2ed36ba61de6f3582dc372fbdfd4a2cddee0ce0"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/ball_camera.py": {
+      "training_sha256": "a9a61f31ee9f57707f2cb7ad1e29d25e94d6db756662cc8e02964baf245f89ab",
+      "published_sha256": "5c3dee7a92f4555d15353bbd07656817686997b350cf49ac94f158430896e242",
+      "installed_receiver_sha256": "5c3dee7a92f4555d15353bbd07656817686997b350cf49ac94f158430896e242"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/ball_center.py": {
+      "training_sha256": "99f9a86decb800ede0bac347860da57ef21bb26640cffc0505bf7bbe231b5be5",
+      "published_sha256": "29b8790c2ad2c517155195f71f10e6f7459dc32d3ecb8e711fa7481d0b30a210",
+      "installed_receiver_sha256": "29b8790c2ad2c517155195f71f10e6f7459dc32d3ecb8e711fa7481d0b30a210"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/ball_center_goal.py": {
+      "training_sha256": "dc84028286a6ab0d753281b82b39a5bc4db1920bdf7af81633ad35d6faa65862",
+      "published_sha256": "2a6fea06736ae3a6b807bff9ed04bffbef6fc5c464be889e1d58c150ff99166d",
+      "installed_receiver_sha256": "2a6fea06736ae3a6b807bff9ed04bffbef6fc5c464be889e1d58c150ff99166d"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/ball_contact_mesh.py": {
+      "training_sha256": "0a793c7a0a2f0a169823a092a90815ac16b02684ec9f39ef67fbdced029b85f6",
+      "published_sha256": "0a793c7a0a2f0a169823a092a90815ac16b02684ec9f39ef67fbdced029b85f6",
+      "installed_receiver_sha256": "0a793c7a0a2f0a169823a092a90815ac16b02684ec9f39ef67fbdced029b85f6"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/ball_lift_reward.py": {
+      "training_sha256": "6bc9b35aa7f7cb49fc8d90dec6e804017e3bc042169099f4f53c6b1965514ac7",
+      "published_sha256": "44494ed5144a578d9c9844a22c7b291ee7167545bbd8a1eb2e39a9738d4af2e7",
+      "installed_receiver_sha256": "44494ed5144a578d9c9844a22c7b291ee7167545bbd8a1eb2e39a9738d4af2e7"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/camera_payloads.py": {
+      "training_sha256": "29b75c2fabdc369c35f1dd0ec7a34c9f4b0e6985bbead7534cf077a03e886c00",
+      "published_sha256": "29b75c2fabdc369c35f1dd0ec7a34c9f4b0e6985bbead7534cf077a03e886c00",
+      "installed_receiver_sha256": "29b75c2fabdc369c35f1dd0ec7a34c9f4b0e6985bbead7534cf077a03e886c00"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/control_state_observation.py": {
+      "training_sha256": "861adae1412765b73560c9ae853a280c420a526b7ba7ee488496ada5f376c589",
+      "published_sha256": "861adae1412765b73560c9ae853a280c420a526b7ba7ee488496ada5f376c589",
+      "installed_receiver_sha256": "861adae1412765b73560c9ae853a280c420a526b7ba7ee488496ada5f376c589"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/gripper_control.py": {
+      "training_sha256": "26644c27c09c29c7076b775afb6ad15dd7615444b93878bca4ab42b17c5d3fb1",
+      "published_sha256": "26644c27c09c29c7076b775afb6ad15dd7615444b93878bca4ab42b17c5d3fb1",
+      "installed_receiver_sha256": "26644c27c09c29c7076b775afb6ad15dd7615444b93878bca4ab42b17c5d3fb1"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/lift_env.py": {
+      "training_sha256": "a4e89600dddc234840f193b492b1e097508eff0564af607e5873f8f0ffb17c84",
+      "published_sha256": "3eb1ca01bbdeb71bea60d7030e50d7a97dc8cbebe8cc2bce4eb7cfcb6e3fe044",
+      "installed_receiver_sha256": "3eb1ca01bbdeb71bea60d7030e50d7a97dc8cbebe8cc2bce4eb7cfcb6e3fe044"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/lift_task_logic.py": {
+      "training_sha256": "434eb13c41cefe5ac5ef011b3b874a61ba1562cc3687abefa5f3cd6f5b5a08ee",
+      "published_sha256": "f0411719c4cc13424453ec9d600f3a17c407e482ce79e115b1a87737c31b3ea5",
+      "installed_receiver_sha256": "f0411719c4cc13424453ec9d600f3a17c407e482ce79e115b1a87737c31b3ea5"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/lift_with_ball_env.py": {
+      "training_sha256": "1dd9f9b654c40ab49805e25c00cf0fa5604f6bec88c90cf9c0fc5c8176e75fb3",
+      "published_sha256": "4baf04a1f9fe19e5befe8d5709572b459b54dda9335a388bf6e84af83f9b161e",
+      "installed_receiver_sha256": "4baf04a1f9fe19e5befe8d5709572b459b54dda9335a388bf6e84af83f9b161e"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/newton_assets.py": {
+      "training_sha256": "b91ffd1762dde7bba04075d9c24eeac3849b35bcecb115268179dba60d6ec758",
+      "published_sha256": "b91ffd1762dde7bba04075d9c24eeac3849b35bcecb115268179dba60d6ec758",
+      "installed_receiver_sha256": "b91ffd1762dde7bba04075d9c24eeac3849b35bcecb115268179dba60d6ec758"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/newton_peg.py": {
+      "training_sha256": "ab0a1e6a45ed8b3e0a4dff787a13ecc3dfeae8e1f9089ce0bfbdcd8b7da2ea56",
+      "published_sha256": "ab0a1e6a45ed8b3e0a4dff787a13ecc3dfeae8e1f9089ce0bfbdcd8b7da2ea56",
+      "installed_receiver_sha256": "ab0a1e6a45ed8b3e0a4dff787a13ecc3dfeae8e1f9089ce0bfbdcd8b7da2ea56"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_circle_seated_cfg.py": {
+      "training_sha256": "640cde2aa633b9d800c1a7d9610c3842121cc18e5981f66d9f554e9bac1b96bb",
+      "published_sha256": "640cde2aa633b9d800c1a7d9610c3842121cc18e5981f66d9f554e9bac1b96bb",
+      "installed_receiver_sha256": "640cde2aa633b9d800c1a7d9610c3842121cc18e5981f66d9f554e9bac1b96bb"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_circle_v10_cfg.py": {
+      "training_sha256": "be13f6540e72533c662ad950beb564c58a7d19312f7282d78114a68e264529e8",
+      "published_sha256": "be13f6540e72533c662ad950beb564c58a7d19312f7282d78114a68e264529e8",
+      "installed_receiver_sha256": "be13f6540e72533c662ad950beb564c58a7d19312f7282d78114a68e264529e8"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_circle_v11_cfg.py": {
+      "training_sha256": "bb109f4019e231179dba490cede894b44b4d46b548bf743b8b84ed77928ee249",
+      "published_sha256": "bb109f4019e231179dba490cede894b44b4d46b548bf743b8b84ed77928ee249",
+      "installed_receiver_sha256": "bb109f4019e231179dba490cede894b44b4d46b548bf743b8b84ed77928ee249"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_circle_v12_cfg.py": {
+      "training_sha256": "ccd919e3a8a62f1a3653d6e370a3358f91770e6dfc930527ea18e940cb41dd55",
+      "published_sha256": "ccd919e3a8a62f1a3653d6e370a3358f91770e6dfc930527ea18e940cb41dd55",
+      "installed_receiver_sha256": "ccd919e3a8a62f1a3653d6e370a3358f91770e6dfc930527ea18e940cb41dd55"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_circle_v13_cfg.py": {
+      "training_sha256": "9b1882f55a707c77a908d3f71dfc6c6ef0301d33c53558840692290da505b184",
+      "published_sha256": "5d8c065358c28e8d9d86b387465795ca1f26584cea47c368d9203f7062bd54d4",
+      "installed_receiver_sha256": "5d8c065358c28e8d9d86b387465795ca1f26584cea47c368d9203f7062bd54d4"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_circle_v14_cfg.py": {
+      "training_sha256": "da5322895ff92af60fd2ce7aa17250489163ff6cd4f3ebcc7efc06b45662189d",
+      "published_sha256": "da5322895ff92af60fd2ce7aa17250489163ff6cd4f3ebcc7efc06b45662189d",
+      "installed_receiver_sha256": "da5322895ff92af60fd2ce7aa17250489163ff6cd4f3ebcc7efc06b45662189d"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_circle_v9_cfg.py": {
+      "training_sha256": "e713e0d49e9f3d18b6d569e3f9060974a3a738c1e1fb5ab09b38b80448041b47",
+      "published_sha256": "e713e0d49e9f3d18b6d569e3f9060974a3a738c1e1fb5ab09b38b80448041b47",
+      "installed_receiver_sha256": "e713e0d49e9f3d18b6d569e3f9060974a3a738c1e1fb5ab09b38b80448041b47"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_contact_grasp.py": {
+      "training_sha256": "deaf98f410c787f017d015851257a2265c1b82557e1b42f63d1ce86c49f65bc5",
+      "published_sha256": "deaf98f410c787f017d015851257a2265c1b82557e1b42f63d1ce86c49f65bc5",
+      "installed_receiver_sha256": "deaf98f410c787f017d015851257a2265c1b82557e1b42f63d1ce86c49f65bc5"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_grasp_geometry.py": {
+      "training_sha256": "b502c1f14ee68a014f7afe36881a24b1ecb48129f3d7cf73a36010efc50b2604",
+      "published_sha256": "b502c1f14ee68a014f7afe36881a24b1ecb48129f3d7cf73a36010efc50b2604",
+      "installed_receiver_sha256": "b502c1f14ee68a014f7afe36881a24b1ecb48129f3d7cf73a36010efc50b2604"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_in_hole_env.py": {
+      "training_sha256": "08809e63e1dec263043683320801d01a4664fa09c66d3c12aaf7f618c24d4fef",
+      "published_sha256": "701c402c45a15334990ba7448d5d00071f2c58b2de1cf6bfbb920857133a1cc3",
+      "installed_receiver_sha256": "701c402c45a15334990ba7448d5d00071f2c58b2de1cf6bfbb920857133a1cc3"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_in_hole_task_logic.py": {
+      "training_sha256": "5dbb39c54ed3411d407eb63c08fb6e509b47834646013c75ebbe0eb7942ce2ba",
+      "published_sha256": "98b25f528e69ccbaabb05aeac794581f274f79df803cc90e40a6afe7686de30a",
+      "installed_receiver_sha256": "98b25f528e69ccbaabb05aeac794581f274f79df803cc90e40a6afe7686de30a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_reward_shaping.py": {
+      "training_sha256": "a29a8da1d4d8cd7fc7e75e23940c9f5a61fcd126bc8e7393cb8455b5168951a5",
+      "published_sha256": "a29a8da1d4d8cd7fc7e75e23940c9f5a61fcd126bc8e7393cb8455b5168951a5",
+      "installed_receiver_sha256": "a29a8da1d4d8cd7fc7e75e23940c9f5a61fcd126bc8e7393cb8455b5168951a5"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/peg_termination_geometry.py": {
+      "training_sha256": "6fb430a0bb21976575704091d7b47cf50d9615446e44dbea9fc3f06232a409cc",
+      "published_sha256": "ec58d952dd8aeb01e84ddcdc61116d3f81cdd6fdd4c659f47d80b1ec39567c3d",
+      "installed_receiver_sha256": "ec58d952dd8aeb01e84ddcdc61116d3f81cdd6fdd4c659f47d80b1ec39567c3d"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/envs/robot_cfg.py": {
+      "training_sha256": "dad04026ae28944a7fcae82a8ffd6d025f32ed6625bd91e6c0907ea77d80f240",
+      "published_sha256": "67e43494eba944927ede0211bc52bc7ca89543a62a81f720705457f8c0df8052",
+      "installed_receiver_sha256": "67e43494eba944927ede0211bc52bc7ca89543a62a81f720705457f8c0df8052"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/__init__.py": {
+      "training_sha256": "9ab9d83d10bb05e29343f31c75bc6f5f3ff7657964e9b6645f56c58cce00211d",
+      "published_sha256": "9ab9d83d10bb05e29343f31c75bc6f5f3ff7657964e9b6645f56c58cce00211d",
+      "installed_receiver_sha256": "9ab9d83d10bb05e29343f31c75bc6f5f3ff7657964e9b6645f56c58cce00211d"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/ablation.py": {
+      "training_sha256": "b43408bb79a9ce6463a42b333cc1f21528645fccf2a33476d227a1acfb6e83ec",
+      "published_sha256": "b43408bb79a9ce6463a42b333cc1f21528645fccf2a33476d227a1acfb6e83ec",
+      "installed_receiver_sha256": "b43408bb79a9ce6463a42b333cc1f21528645fccf2a33476d227a1acfb6e83ec"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/analyze_motion_context.py": {
+      "training_sha256": "abf4ba01fcf715e19f539c21533b7d82ae091945fba9904fc1b12e534959dc58",
+      "published_sha256": "c81478bc47e00d26979b75a0d6773905ff6ae951c4038ac72b5a2c4a6a47e589",
+      "installed_receiver_sha256": "c81478bc47e00d26979b75a0d6773905ff6ae951c4038ac72b5a2c4a6a47e589"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/checkpoint_audit.py": {
+      "training_sha256": "ad4601390ae7117f787c59e62a569111e010ae414c886e4739f43b88ab72a5e1",
+      "published_sha256": "ad4601390ae7117f787c59e62a569111e010ae414c886e4739f43b88ab72a5e1",
+      "installed_receiver_sha256": "ad4601390ae7117f787c59e62a569111e010ae414c886e4739f43b88ab72a5e1"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/control_timing.py": {
+      "training_sha256": "15137a9898fac8980d5cba16cfeac40715e87cff7b2615b0e78154fc8b6d0e60",
+      "published_sha256": "15137a9898fac8980d5cba16cfeac40715e87cff7b2615b0e78154fc8b6d0e60",
+      "installed_receiver_sha256": "15137a9898fac8980d5cba16cfeac40715e87cff7b2615b0e78154fc8b6d0e60"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/evaluate.py": {
+      "training_sha256": "3a8fc0258131bfd3090e792962c0ab513062466ca6a9d65324df10db99430fb3",
+      "published_sha256": "3a8fc0258131bfd3090e792962c0ab513062466ca6a9d65324df10db99430fb3",
+      "installed_receiver_sha256": "3a8fc0258131bfd3090e792962c0ab513062466ca6a9d65324df10db99430fb3"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/metrics.py": {
+      "training_sha256": "08566d5ec356d6b38738ce98d0b91e26a89dcb3352e01b66ca8fc58b69284da5",
+      "published_sha256": "08566d5ec356d6b38738ce98d0b91e26a89dcb3352e01b66ca8fc58b69284da5",
+      "installed_receiver_sha256": "08566d5ec356d6b38738ce98d0b91e26a89dcb3352e01b66ca8fc58b69284da5"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/physical_audit.py": {
+      "training_sha256": "d20ad96d84541952006a1a6b7d2e5f4a36316772a7840358538ef7787682f586",
+      "published_sha256": "d20ad96d84541952006a1a6b7d2e5f4a36316772a7840358538ef7787682f586",
+      "installed_receiver_sha256": "d20ad96d84541952006a1a6b7d2e5f4a36316772a7840358538ef7787682f586"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/reset_scenarios.py": {
+      "training_sha256": "de5b863e3cc5783e5e8d762ef4b1f1834ca620cb152693f6dcf3215b32a8ba5a",
+      "published_sha256": "de5b863e3cc5783e5e8d762ef4b1f1834ca620cb152693f6dcf3215b32a8ba5a",
+      "installed_receiver_sha256": "de5b863e3cc5783e5e8d762ef4b1f1834ca620cb152693f6dcf3215b32a8ba5a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/eval/wrist_disturbance.py": {
+      "training_sha256": "261347acd23e99d07849aa0e41249741edb4b14884051bc162392627e7b99815",
+      "published_sha256": "261347acd23e99d07849aa0e41249741edb4b14884051bc162392627e7b99815",
+      "installed_receiver_sha256": "261347acd23e99d07849aa0e41249741edb4b14884051bc162392627e7b99815"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/legacy_api.py": {
+      "training_sha256": "7ceddeedebaf37af60c638faf2c3cfadc6ec3e8d0f7d122d136c8cf6841c4fa2",
+      "published_sha256": "7ceddeedebaf37af60c638faf2c3cfadc6ec3e8d0f7d122d136c8cf6841c4fa2",
+      "installed_receiver_sha256": "7ceddeedebaf37af60c638faf2c3cfadc6ec3e8d0f7d122d136c8cf6841c4fa2"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/legacy_math.py": {
+      "training_sha256": "9d9e2e2b163e381843234d89386bf5256b867da9a8c6782a85de1526f44f5066",
+      "published_sha256": "9d9e2e2b163e381843234d89386bf5256b867da9a8c6782a85de1526f44f5066",
+      "installed_receiver_sha256": "9d9e2e2b163e381843234d89386bf5256b867da9a8c6782a85de1526f44f5066"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/__init__.py": {
+      "training_sha256": "56585e069606efd059a69cc66052e883857005b4f43128bfe8515b76d23c0033",
+      "published_sha256": "56585e069606efd059a69cc66052e883857005b4f43128bfe8515b76d23c0033",
+      "installed_receiver_sha256": "56585e069606efd059a69cc66052e883857005b4f43128bfe8515b76d23c0033"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/actor.py": {
+      "training_sha256": "d293a2ea53d883d9b1d26c11481e42736325af33ca8713296b4cbb85a1223198",
+      "published_sha256": "8d719974ab4b56d94c3341e2283d21eb85abb34177662ba9d4eaa6a0a711a118",
+      "installed_receiver_sha256": "8d719974ab4b56d94c3341e2283d21eb85abb34177662ba9d4eaa6a0a711a118"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/arm_reference_control.py": {
+      "training_sha256": "49ecc117375234b62ed502f2f4a318196e705fa94b3e2741fadfc9b37a414e5a",
+      "published_sha256": "49ecc117375234b62ed502f2f4a318196e705fa94b3e2741fadfc9b37a414e5a",
+      "installed_receiver_sha256": "49ecc117375234b62ed502f2f4a318196e705fa94b3e2741fadfc9b37a414e5a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/arm_target_control.py": {
+      "training_sha256": "ce88623ed5c4fb18de57e02f1fda1b8487fa2ba8b2bd70f87501d61753f9d00f",
+      "published_sha256": "ce88623ed5c4fb18de57e02f1fda1b8487fa2ba8b2bd70f87501d61753f9d00f",
+      "installed_receiver_sha256": "ce88623ed5c4fb18de57e02f1fda1b8487fa2ba8b2bd70f87501d61753f9d00f"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/ball_center_goal_matched.py": {
+      "training_sha256": "20f622542a1891fff284a84ba2bee672c44f105a2c086047e431c26a9028768f",
+      "published_sha256": "20f622542a1891fff284a84ba2bee672c44f105a2c086047e431c26a9028768f",
+      "installed_receiver_sha256": "20f622542a1891fff284a84ba2bee672c44f105a2c086047e431c26a9028768f"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/bounded_execution_mean.py": {
+      "training_sha256": "bcbdf270a3dec5becb3d2c9c0e4c13687d9aa65612413bcc2fc4b85826067ca0",
+      "published_sha256": "bcbdf270a3dec5becb3d2c9c0e4c13687d9aa65612413bcc2fc4b85826067ca0",
+      "installed_receiver_sha256": "bcbdf270a3dec5becb3d2c9c0e4c13687d9aa65612413bcc2fc4b85826067ca0"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/control_state.py": {
+      "training_sha256": "f1b4e5d65aaf9a4e934dcba19f3c8693b27cc1876b4d2a7e5706c823deac04d8",
+      "published_sha256": "f1b4e5d65aaf9a4e934dcba19f3c8693b27cc1876b4d2a7e5706c823deac04d8",
+      "installed_receiver_sha256": "f1b4e5d65aaf9a4e934dcba19f3c8693b27cc1876b4d2a7e5706c823deac04d8"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/critic.py": {
+      "training_sha256": "ae2acec72bf474f239e29a8541bff4930974ea2e157f9bccbadfe5ef7f761299",
+      "published_sha256": "ae2acec72bf474f239e29a8541bff4930974ea2e157f9bccbadfe5ef7f761299",
+      "installed_receiver_sha256": "ae2acec72bf474f239e29a8541bff4930974ea2e157f9bccbadfe5ef7f761299"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_balanced.py": {
+      "training_sha256": "fb8db96496f3a4ca4c53ed6843213bbe5712adf81c1c2b83203175541d7179ec",
+      "published_sha256": "4da4793a06971fd38edd79851dd6408f6010226892c52ee36bb2473801e2041b",
+      "installed_receiver_sha256": "4da4793a06971fd38edd79851dd6408f6010226892c52ee36bb2473801e2041b"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_bounded.py": {
+      "training_sha256": "1dda940c56c16ad0b297e2b75a55ec154dc2580f48f26be3d85d4205d191b110",
+      "published_sha256": "1dda940c56c16ad0b297e2b75a55ec154dc2580f48f26be3d85d4205d191b110",
+      "installed_receiver_sha256": "1dda940c56c16ad0b297e2b75a55ec154dc2580f48f26be3d85d4205d191b110"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_bounded_distribution.py": {
+      "training_sha256": "8db29d8203b4a28a41c46e511f3f5a30bf5bf82812d0ac813242ce20c9a049ba",
+      "published_sha256": "9c459a455e28455048847b4d5846d0de58b0109f1b71932de810da30407ea5d6",
+      "installed_receiver_sha256": "9c459a455e28455048847b4d5846d0de58b0109f1b71932de810da30407ea5d6"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_bounded_residual.py": {
+      "training_sha256": "1305655ca3318a6a85bbd88f6b3eab212716fc815b56d2dab2c8ed5bc3fac33c",
+      "published_sha256": "844cb1cd495e15bfe80eae41518c2a0495dc251ffe502e327d13491bc7b14c75",
+      "installed_receiver_sha256": "844cb1cd495e15bfe80eae41518c2a0495dc251ffe502e327d13491bc7b14c75"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_curriculum.py": {
+      "training_sha256": "7b428523c4394cda083f6652c096624f8805456d852826bcb7c592c09fbceecb",
+      "published_sha256": "6fd5c1195d56fff9e6112debbc865cb8f80e8eba04bfd8e43aa450084f1c9ac2",
+      "installed_receiver_sha256": "6fd5c1195d56fff9e6112debbc865cb8f80e8eba04bfd8e43aa450084f1c9ac2"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_factorized.py": {
+      "training_sha256": "e5dd0fecd873d85a40687b3c4d101e9017c592065a6ee73bb8738664ed91567f",
+      "published_sha256": "a135728a3e3492e2f0cdb0598b4b25636be64c8d05b30327fa68fa9ffd557e0a",
+      "installed_receiver_sha256": "a135728a3e3492e2f0cdb0598b4b25636be64c8d05b30327fa68fa9ffd557e0a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_stable.py": {
+      "training_sha256": "d6ce1e80a4cc7e8918ae85d74673945086b5caae346e5ac0b2d050b073d2ef01",
+      "published_sha256": "d6ce1e80a4cc7e8918ae85d74673945086b5caae346e5ac0b2d050b073d2ef01",
+      "installed_receiver_sha256": "d6ce1e80a4cc7e8918ae85d74673945086b5caae346e5ac0b2d050b073d2ef01"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_stepwise.py": {
+      "training_sha256": "fd980b7df8cd63b403e5344bfad2c6ef67be99709f3a1ad14e34086b34d3fd81",
+      "published_sha256": "856ba6297017e9c227d587b0d0fc3a648f06830f059b4e2f15ea8fb6b2ab7a61",
+      "installed_receiver_sha256": "856ba6297017e9c227d587b0d0fc3a648f06830f059b4e2f15ea8fb6b2ab7a61"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/full6d_stepwise_strict.py": {
+      "training_sha256": "734f4d1eaecf99cba533a4d9b963ddc019a38e898974bfe911d3be589e2aff4a",
+      "published_sha256": "734f4d1eaecf99cba533a4d9b963ddc019a38e898974bfe911d3be589e2aff4a",
+      "installed_receiver_sha256": "734f4d1eaecf99cba533a4d9b963ddc019a38e898974bfe911d3be589e2aff4a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/grasp_reset_curriculum.py": {
+      "training_sha256": "867f91065d4fa6d0a3d3f2a79b40709d17cdb9c9dd0f100614be3d912b3eef5d",
+      "published_sha256": "13344ea016c7b641010dd85338b1e10399169a3c6c1032ac9664508eeac97ab3",
+      "installed_receiver_sha256": "13344ea016c7b641010dd85338b1e10399169a3c6c1032ac9664508eeac97ab3"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/grasp_reset_exploration.py": {
+      "training_sha256": "397954eb1e9e563e5ebfa7067c8462ba7c5078567e4d856fc3195dae46a94f4b",
+      "published_sha256": "397954eb1e9e563e5ebfa7067c8462ba7c5078567e4d856fc3195dae46a94f4b",
+      "installed_receiver_sha256": "397954eb1e9e563e5ebfa7067c8462ba7c5078567e4d856fc3195dae46a94f4b"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/main_comparison.py": {
+      "training_sha256": "22e5ffea9d32bdca92764af88b91b0925ee48217c3c3cd25c0634452b0981e50",
+      "published_sha256": "22e5ffea9d32bdca92764af88b91b0925ee48217c3c3cd25c0634452b0981e50",
+      "installed_receiver_sha256": "22e5ffea9d32bdca92764af88b91b0925ee48217c3c3cd25c0634452b0981e50"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/matched_communication.py": {
+      "training_sha256": "5dfe8fb50b089f9933f8082c0a18f9b5e28dfb84a97ab35378f6b2d8de4cac80",
+      "published_sha256": "08daad1edff1f2eb577878f59cadaf10005912e75901a9cc777db4497a6beb7c",
+      "installed_receiver_sha256": "08daad1edff1f2eb577878f59cadaf10005912e75901a9cc777db4497a6beb7c"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/matched_gripper_local.py": {
+      "training_sha256": "818071eb59f6a4049fa5dea5f55f8e39e39da9ec5d6df062fb9e1fe913f2caf1",
+      "published_sha256": "818071eb59f6a4049fa5dea5f55f8e39e39da9ec5d6df062fb9e1fe913f2caf1",
+      "installed_receiver_sha256": "818071eb59f6a4049fa5dea5f55f8e39e39da9ec5d6df062fb9e1fe913f2caf1"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/models/policy_transfer.py": {
+      "training_sha256": "c04d3dec41778bc0d69656e145519dcba777b194c0fe54466a3977a442eee44e",
+      "published_sha256": "c04d3dec41778bc0d69656e145519dcba777b194c0fe54466a3977a442eee44e",
+      "installed_receiver_sha256": "c04d3dec41778bc0d69656e145519dcba777b194c0fe54466a3977a442eee44e"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/perception/__init__.py": {
+      "training_sha256": "fb04699b77e2e093faef2e2e07cfe8dc8f44d7691b7c1790b50b8fc75f52585d",
+      "published_sha256": "fb04699b77e2e093faef2e2e07cfe8dc8f44d7691b7c1790b50b8fc75f52585d",
+      "installed_receiver_sha256": "fb04699b77e2e093faef2e2e07cfe8dc8f44d7691b7c1790b50b8fc75f52585d"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/perception/apriltag_geometry.py": {
+      "training_sha256": "75afc214a07543d2f2a0c792a6e9da0d06caca53d53590d99b56574b03429cd8",
+      "published_sha256": "75afc214a07543d2f2a0c792a6e9da0d06caca53d53590d99b56574b03429cd8",
+      "installed_receiver_sha256": "75afc214a07543d2f2a0c792a6e9da0d06caca53d53590d99b56574b03429cd8"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/perception/grasp_target.py": {
+      "training_sha256": "4be054c3305cd9c5e1094be134a7bccf9f0bc23e5fbf60c89bc19b4aa1d30165",
+      "published_sha256": "4be054c3305cd9c5e1094be134a7bccf9f0bc23e5fbf60c89bc19b4aa1d30165",
+      "installed_receiver_sha256": "4be054c3305cd9c5e1094be134a7bccf9f0bc23e5fbf60c89bc19b4aa1d30165"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/perception/pose_fusion.py": {
+      "training_sha256": "f62b35030561bac054169a6bfcb02ab2bf14801725cf6f6605f368c94ae7015a",
+      "published_sha256": "f62b35030561bac054169a6bfcb02ab2bf14801725cf6f6605f368c94ae7015a",
+      "installed_receiver_sha256": "f62b35030561bac054169a6bfcb02ab2bf14801725cf6f6605f368c94ae7015a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/__init__.py": {
+      "training_sha256": "d75c2d96ba41e9800d8b1ec287cc88f0d375ad48ae15aaca2202ae87db01980a",
+      "published_sha256": "d75c2d96ba41e9800d8b1ec287cc88f0d375ad48ae15aaca2202ae87db01980a",
+      "installed_receiver_sha256": "d75c2d96ba41e9800d8b1ec287cc88f0d375ad48ae15aaca2202ae87db01980a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/action_trace.py": {
+      "training_sha256": "760130385ae6bbc9f799986ab5f1d472a5dc47fbbe222feb399fc0300119feee",
+      "published_sha256": "760130385ae6bbc9f799986ab5f1d472a5dc47fbbe222feb399fc0300119feee",
+      "installed_receiver_sha256": "760130385ae6bbc9f799986ab5f1d472a5dc47fbbe222feb399fc0300119feee"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/checkpoint.py": {
+      "training_sha256": "5faf8d5a6aa99b7ced8ff709b1d980772a8cd900556721ae4bbcf18ff4f967f9",
+      "published_sha256": "5faf8d5a6aa99b7ced8ff709b1d980772a8cd900556721ae4bbcf18ff4f967f9",
+      "installed_receiver_sha256": "5faf8d5a6aa99b7ced8ff709b1d980772a8cd900556721ae4bbcf18ff4f967f9"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/checkpoint_config.py": {
+      "training_sha256": "3f19b2bde980a4c96bad328fb3d8b5fe0b71b3c56cae60ff47ba2639d8cebb39",
+      "published_sha256": "3f19b2bde980a4c96bad328fb3d8b5fe0b71b3c56cae60ff47ba2639d8cebb39",
+      "installed_receiver_sha256": "3f19b2bde980a4c96bad328fb3d8b5fe0b71b3c56cae60ff47ba2639d8cebb39"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/configs/__init__.py": {
+      "training_sha256": "fd42ce91e63332d546e46b7eb1701fbe73e359e45d0a0446ded68eee5de41a51",
+      "published_sha256": "fd42ce91e63332d546e46b7eb1701fbe73e359e45d0a0446ded68eee5de41a51",
+      "installed_receiver_sha256": "fd42ce91e63332d546e46b7eb1701fbe73e359e45d0a0446ded68eee5de41a51"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/evaluation_state.py": {
+      "training_sha256": "763cb92061812441d7841e399abbf6422a5ee8562640ccf0c9538213bb5acb6a",
+      "published_sha256": "763cb92061812441d7841e399abbf6422a5ee8562640ccf0c9538213bb5acb6a",
+      "installed_receiver_sha256": "763cb92061812441d7841e399abbf6422a5ee8562640ccf0c9538213bb5acb6a"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/full6d_buffer_dropout.py": {
+      "training_sha256": "73c56f89425fbe3c2d12d13c8454d5a76fa620c8681124b17ace603742514a1c",
+      "published_sha256": "f9d5363b7c0ff99c84a169c22e11e76143bb35c555754f840f7a240bd2fdc26f",
+      "installed_receiver_sha256": "f9d5363b7c0ff99c84a169c22e11e76143bb35c555754f840f7a240bd2fdc26f"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/full6d_message_dropout.py": {
+      "training_sha256": "90fb7908ffd2e53b4bd58dccccaa00c1b767dbaf475081c5c14853554235f796",
+      "published_sha256": "90fb7908ffd2e53b4bd58dccccaa00c1b767dbaf475081c5c14853554235f796",
+      "installed_receiver_sha256": "90fb7908ffd2e53b4bd58dccccaa00c1b767dbaf475081c5c14853554235f796"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/full6d_message_dropout_seeded.py": {
+      "training_sha256": "a495a94b05730f52bd65c6d95ea5db5268d10e0a22e8d95d8b2619aa7a65ae3e",
+      "published_sha256": "a495a94b05730f52bd65c6d95ea5db5268d10e0a22e8d95d8b2619aa7a65ae3e",
+      "installed_receiver_sha256": "a495a94b05730f52bd65c6d95ea5db5268d10e0a22e8d95d8b2619aa7a65ae3e"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/train_mappo.py": {
+      "training_sha256": "5b4f0da5dfdc46f30758cdb8fabe363bc146c298ec7ad007875a1b5aebd5c7e4",
+      "published_sha256": "5b4f0da5dfdc46f30758cdb8fabe363bc146c298ec7ad007875a1b5aebd5c7e4",
+      "installed_receiver_sha256": "5b4f0da5dfdc46f30758cdb8fabe363bc146c298ec7ad007875a1b5aebd5c7e4"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/trainer.py": {
+      "training_sha256": "8addc27c5fa121164098015a6a71be1db34668fe8cf9b3059ffde7e7dda8b10b",
+      "published_sha256": "4532fe8092efb0324ba9ca242e29ef827f9b8da795d4ea41b4d3eb99e6755726",
+      "installed_receiver_sha256": "4532fe8092efb0324ba9ca242e29ef827f9b8da795d4ea41b4d3eb99e6755726"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/configs/lift_mappo.yaml": {
+      "training_sha256": "c1ea193034b9c49027b0d500773cd4bbf30f290a02ca5e91dd624e71e2dec9f0",
+      "published_sha256": "c1ea193034b9c49027b0d500773cd4bbf30f290a02ca5e91dd624e71e2dec9f0",
+      "installed_receiver_sha256": "c1ea193034b9c49027b0d500773cd4bbf30f290a02ca5e91dd624e71e2dec9f0"
+    },
+    "source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/train/configs/peg_in_hole_mappo.yaml": {
+      "training_sha256": "91c4df2d2227c064b30cc2ba1c0f1248fb2e8eaf796471fb5b06c40cfe319d7a",
+      "published_sha256": "91c4df2d2227c064b30cc2ba1c0f1248fb2e8eaf796471fb5b06c40cfe319d7a",
+      "installed_receiver_sha256": "91c4df2d2227c064b30cc2ba1c0f1248fb2e8eaf796471fb5b06c40cfe319d7a"
+    },
+    "scripts/studies/run_message_comparison.py": {
+      "training_sha256": "cccf056677f8a7e70ce872a16b6f3e1b0092967dab21e0b124667a7845a9b93d",
+      "published_sha256": "cccf056677f8a7e70ce872a16b6f3e1b0092967dab21e0b124667a7845a9b93d",
+      "installed_receiver_sha256": "cccf056677f8a7e70ce872a16b6f3e1b0092967dab21e0b124667a7845a9b93d"
+    },
+    "scripts/reinforcement_learning/skrl/train_openarm_bimanual_direct.py": {
+      "training_sha256": "fabb3d30740a48e04dfeb26d9f3f4590af451461996d568b1af115ee5f011393",
+      "published_sha256": "929ef073eb96df795dd6b9ffa954ca305253e8fe921e66d8ac8952da7bb6eedb",
+      "installed_receiver_sha256": "929ef073eb96df795dd6b9ffa954ca305253e8fe921e66d8ac8952da7bb6eedb"
+    },
+    "scripts/reinforcement_learning/skrl/play_openarm_bimanual_direct.py": {
+      "training_sha256": "ea322bcbe87747d3c141e78cf24842a1531183a4c7458bd7227640f254d1459c",
+      "published_sha256": "ea322bcbe87747d3c141e78cf24842a1531183a4c7458bd7227640f254d1459c",
+      "installed_receiver_sha256": "ea322bcbe87747d3c141e78cf24842a1531183a4c7458bd7227640f254d1459c"
+    }
+  }
+}

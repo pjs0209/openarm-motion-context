@@ -23,7 +23,9 @@ def _validate_profile(module, state, prefix, *args):
 def build_camera_pose_mappo_agent(env, experiment_cfg):
     """Use the same Gaussian actor and physical target guard with a marked layout."""
     task = getattr(env, "unwrapped", env)
-    if task.cfg.local_pose_observation_profile != PROFILE or task.own_observation_dim not in (33, 37):
+    if task.cfg.local_pose_observation_profile != PROFILE or task.own_observation_dim - getattr(
+        task.cfg, "control_state_observation_dim", 0
+    ) not in (33, 37):
         raise ValueError("Camera-rotation builder requires its registered observation task")
     agent = build_target_bounded_mappo_agent(env, experiment_cfg)
     for modules in agent.models.values():

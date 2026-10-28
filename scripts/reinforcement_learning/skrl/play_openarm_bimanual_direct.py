@@ -98,6 +98,13 @@ parser.add_argument(
 )
 parser.add_argument("--debug_interval", type=int, default=25, help="Print debug stats every N steps.")
 parser.add_argument(
+    "--audit_checkpoints",
+    type=Path,
+    nargs="+",
+    default=None,
+    help="After wrist diagnostic evaluation, inspect these same-run checkpoints on the captured first-episode states.",
+)
+parser.add_argument(
     "--wrist_disturbance",
     type=Path,
     default=None,
@@ -385,14 +392,48 @@ def _apply_compact_motion_mode_cfg(agent_cfg: dict, env_cfg=None) -> None:
             trainer_section["mode_share_confidence_threshold"] = mode_cfg["share_confidence_threshold"]
 
 
+def _validate_wrist_evaluation(cli):
+    if cli.audit_checkpoints and cli.wrist_disturbance is None:
+        raise ValueError("Checkpoint distribution audit requires wrist diagnostic observation capture")
+    if cli.wrist_disturbance is None:
+        return
+    if cli.scenario_seed_start is None or cli.num_envs != 1 or not cli.num_eval_episodes:
+        raise ValueError("Wrist diagnostics require one world, scenario_seed_start and num_eval_episodes")
+    if not (cli.save_motion_context_trace or cli.save_mode_trace):
+        raise ValueError("Wrist diagnostics require saved episode traces")
+
+
+def _evaluate_with_wrist_disturbance(trainer, task_env, trace_dir, cli):
+    disturbance = None
+    if cli.wrist_disturbance is not None:
+        import json
+
+        from isaaclab_tasks.direct.openarm_motion_context.eval.wrist_disturbance import WristDisturbance
+
+        disturbance = WristDisturbance(task_env, json.loads(cli.wrist_disturbance.read_text()), Path(trace_dir))
+    completed = False
+    try:
+        _evaluate_with_reset_scenarios(trainer, task_env, trace_dir, cli.scenario_seed_start, cli.num_eval_episodes)
+        completed = True
+    finally:
+        if disturbance is not None:
+            disturbance.close(completed)
+    if completed and cli.audit_checkpoints:
+        from isaaclab_tasks.direct.openarm_motion_context.eval.checkpoint_audit import audit_checkpoint_distributions
+
+        audit_checkpoint_distributions(
+            trainer.agents,
+            Path(trace_dir),
+            cli.audit_checkpoints,
+            Path(cli.checkpoint),
+            float(task_env.cfg.gripper_switch_epsilon),
+        )
+
+
 def main(env_cfg, agent_cfg):
     """checkpoint evaluation을 위한 Hydra entry point."""
 
-    if args_cli.wrist_disturbance is not None:
-        if args_cli.scenario_seed_start is None or args_cli.num_envs != 1 or not args_cli.num_eval_episodes:
-            raise ValueError("Wrist diagnostics require one world, scenario_seed_start and num_eval_episodes")
-        if not (args_cli.save_motion_context_trace or args_cli.save_mode_trace):
-            raise ValueError("Wrist diagnostics require saved episode traces")
+    _validate_wrist_evaluation(args_cli)
     checkpoint_path = retrieve_file_path(args_cli.checkpoint)
     checkpoint_agent_cfg_path = Path(checkpoint_path).parent.parent / "params" / "agent.yaml"
     training_seed = None
@@ -504,24 +545,7 @@ def main(env_cfg, agent_cfg):
             intent_path = retrieve_file_path(args_cli.intent_head_checkpoint)
             agent.load_intent_heads(intent_path)
             print(f"[INFO] Loaded offline latent-interaction-intent modules from: {intent_path}")
-        disturbance = None
-        if args_cli.wrist_disturbance is not None:
-            import json
-
-            from isaaclab_tasks.direct.openarm_motion_context.eval.wrist_disturbance import WristDisturbance
-
-            disturbance = WristDisturbance(
-                task_env, json.loads(args_cli.wrist_disturbance.read_text()), Path(trace_dir)
-            )
-        completed = False
-        try:
-            _evaluate_with_reset_scenarios(
-                trainer, task_env, trace_dir, args_cli.scenario_seed_start, args_cli.num_eval_episodes
-            )
-            completed = True
-        finally:
-            if disturbance is not None:
-                disturbance.close(completed)
+        _evaluate_with_wrist_disturbance(trainer, task_env, trace_dir, args_cli)
         env.close()
 
 

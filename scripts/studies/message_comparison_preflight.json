@@ -1,0 +1,43 @@
+{
+  "name": "common_messages_preflight_v1",
+  "scope": "512-step fresh training integration check; not performance evidence. Peg uses a declared 10 N finger effort sensitivity profile, not hardware calibration.",
+  "seeds": [
+    42
+  ],
+  "num_envs": 8,
+  "timesteps": 512,
+  "tasks": {
+    "lift": {
+      "task": "Isaac-OpenArm-Lift-RotationObs-v0",
+      "log_group": "openarm_lift",
+      "common_overrides": [
+        "env.motion_context_trend_horizon=5",
+        "env.action_scale=1.8",
+        "env.action_step_scale=0.01",
+        "env.reset_grace_steps=10",
+        "env.gripper_target_speed_limit=0.05",
+        "env.grasp_position_std=0.02",
+        "env.premature_closure_penalty_scale=1.0",
+        "agent.models.policy.initial_log_std=-1.0",
+        "agent.models.policy.clip_actions=false",
+        "agent.agent.entropy_loss_scale=0.0",
+        "agent.runtime.trainer=isaaclab_tasks.direct.openarm_motion_context.models.grasp_reset_curriculum:GraspResetCurriculumTrainer",
+        "+agent.runtime.arm_target_error_rad=0.2",
+        "+agent.runtime.grasp_curriculum_warm_until=10000",
+        "+agent.runtime.grasp_curriculum_normal_from=40000",
+        "+agent.runtime.gripper_initial_mean=-0.2"
+      ]
+    },
+    "peg": {
+      "task": "Isaac-OpenArm-PegInHole-Circle-Grasp-v0",
+      "log_group": "openarm_peg_in_hole",
+      "common_overrides": [
+        "env.motion_context_trend_horizon=5",
+        "agent.models.policy.initial_log_std=-1.0",
+        "agent.models.policy.clip_actions=false",
+        "agent.agent.entropy_loss_scale=0.0",
+        "env.scene.robot.actuators.openarm_gripper.effort_limit_sim=10.0"
+      ]
+    }
+  }
+}

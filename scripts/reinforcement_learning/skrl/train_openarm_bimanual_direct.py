@@ -332,6 +332,10 @@ def main(env_cfg, agent_cfg):
         agent_cfg.setdefault("models", {}).setdefault("policy", {})["communication_mode"] = str(
             env_cfg.communication_mode
         )
+    if getattr(env_cfg, "observe_control_state", False):
+        policy_cfg = agent_cfg.setdefault("models", {}).setdefault("policy", {})
+        policy_cfg["own_observation_dim"] = env_cfg.own_observation_dim
+        policy_cfg["communication_feature_dim"] = env_cfg.communication_feature_dim
     if args_cli.disable_online_intent_loss or args_cli.freeze_intent_head:
         if "intent_loss_scale" in agent_cfg["agent"]:
             agent_cfg["agent"]["intent_loss_scale"] = 0.0

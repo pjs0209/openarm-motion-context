@@ -87,3 +87,15 @@ newly reconstructed or represented as current source.
 The research results still require their original checkpoint/configuration/trace
 provenance. Code publication does not establish Full 6D superiority, successful
 WithBall centered holding, physically calibrated Peg contact, or sim-to-real success.
+
+
+## Follow-up: common four-message protocol
+
+The statements above describe the initial publication snapshot. The follow-up
+adds the actual own-control-state profile, timing/trace repair, independent CAD
+and solved-contact audit, checkpoint-distribution audit and common four-condition
+runner. See [CURRENT_RESEARCH_STATUS.md](CURRENT_RESEARCH_STATUS.md) for the
+separate eight-run GPU integration check and 25-test receiving-checkout result.
+These short runs were performed explicitly for the follow-up; installation itself
+does not launch them. New diagnostic modules and scripts pass scoped Ruff lint.
+Historical lint debt and separate licensed asset requirements remain.
