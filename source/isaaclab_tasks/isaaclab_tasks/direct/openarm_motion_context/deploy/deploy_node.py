@@ -2,15 +2,15 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""ROS2 deploy bridge for the OpenArm Lift motion-context policy.
+"""ROS2 deploy bridge for the Paper OpenArm Re-Lift policy.
 
 Runtime data flow:
 
 1. D435i AprilTag detector publishes ``T_camera_tag`` per camera.
 2. TF provides ``T_base_camera`` and ``T_base_ee``.
 3. The deploy pose provider estimates ``T_base_box`` and left/right grip poses.
-4. The same 30D own observation and 30D partner-message convention used during
-   Lift training is built on the real robot.
+4. The same 30D own observation and 30D partner-message convention used by the
+   Paper Lift task is built on the real robot.
 5. The policy output is applied as incremental joint-position commands.
 
 The script is intentionally independent from Isaac Sim. It reuses only the
@@ -20,6 +20,7 @@ small geometry and policy modules in ``openarm_motion_context``.
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import os
 import sys
 import time
@@ -29,9 +30,13 @@ from typing import Any
 
 import torch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[6]
 SOURCE_ROOT = REPO_ROOT / "source"
+PINNED_SKRL = REPO_ROOT / "compat" / "skrl_1_4_3"
+if (PINNED_SKRL / "skrl").is_dir():
+    sys.path.insert(0, str(PINNED_SKRL))
+elif importlib.metadata.version("skrl") != "1.4.3":
+    raise RuntimeError("Deployment requires the same pinned skrl 1.4.3 runtime as OpenArm training")
 
 
 def _register_source_namespace(name: str, path: Path) -> None:
@@ -53,19 +58,23 @@ _register_source_namespace(
     TASKS_PACKAGE / "direct/openarm_motion_context",
 )
 
-from isaaclab_tasks.direct.openarm_motion_context.perception.apriltag_geometry import (  # noqa: E402
-    AprilTagDeployPoseProvider,
-    compute_actor_target_from_grip,
-    normalize_quat_wxyz,
-    quat_angle_error_wxyz,
+from isaaclab_tasks.direct.openarm_motion_context.communication.message_builder import (  # noqa: E402
+    MOTION_CONTEXT_MODES,
+    motion_context_payload,
+    pad_message,
 )
-from isaaclab_tasks.direct.openarm_motion_context.models.actor import MotionContextPolicyModel  # noqa: E402
-from isaaclab_tasks.direct.openarm_motion_context.communication.message_builder import pad_message  # noqa: E402
 from isaaclab_tasks.direct.openarm_motion_context.communication.motion import signed_motion_intent  # noqa: E402
 from isaaclab_tasks.direct.openarm_motion_context.communication.motion_context import (  # noqa: E402
-    motion_context_from_raw,
+    full_action_variation,
+    relative_motion_trend,
 )
-from isaaclab_tasks.direct.openarm_motion_context.deploy.apriltag_ros import detection_id as _extract_detection_id  # noqa: E402
+from isaaclab_tasks.direct.openarm_motion_context.deploy.apriltag_ros import (
+    detection_id as _extract_detection_id,  # noqa: E402
+)
+from isaaclab_tasks.direct.openarm_motion_context.deploy.contract import (  # noqa: E402
+    apriltag_detector_parameters,
+    restore_training_contract,
+)
 from isaaclab_tasks.direct.openarm_motion_context.deploy.controller import (  # noqa: E402
     incremental_joint_target,
     update_gripper_closed,
@@ -73,9 +82,18 @@ from isaaclab_tasks.direct.openarm_motion_context.deploy.controller import (  # 
 from isaaclab_tasks.direct.openarm_motion_context.deploy.observation import ObservationNormalizer  # noqa: E402
 from isaaclab_tasks.direct.openarm_motion_context.deploy.robot_state import ArmState, JointSnapshot  # noqa: E402
 from isaaclab_tasks.direct.openarm_motion_context.deploy.safety import (  # noqa: E402
+    joint_position_limits,
     message_is_fresh,
     target_delta_within_limit,
     visible_tag_count,
+)
+from isaaclab_tasks.direct.openarm_motion_context.deploy.telemetry import DeploymentTelemetry  # noqa: E402
+from isaaclab_tasks.direct.openarm_motion_context.models.actor import MotionContextPolicyModel  # noqa: E402
+from isaaclab_tasks.direct.openarm_motion_context.perception.apriltag_geometry import (  # noqa: E402
+    AprilTagDeployPoseProvider,
+    compute_actor_target_from_grip,
+    normalize_quat_wxyz,
+    quat_angle_error_wxyz,
 )
 
 
@@ -84,7 +102,7 @@ def _load_yaml(path: str | os.PathLike[str]) -> dict[str, Any]:
         import yaml
     except ImportError as exc:
         raise RuntimeError("PyYAML is required for the deploy config: pip install pyyaml") from exc
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return data or {}
 
@@ -109,6 +127,14 @@ def _ros_transform_to_pose(transform, *, device: torch.device) -> tuple[torch.Te
     return pos, quat
 
 
+def _ros_pose_to_pose(pose, *, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    p = pose.position
+    q = pose.orientation
+    pos = torch.tensor([p.x, p.y, p.z], dtype=torch.float32, device=device)
+    quat = _xyzw_to_wxyz([q.x, q.y, q.z, q.w], device=device)
+    return pos, quat
+
+
 def _now_sec(node) -> float:
     return node.get_clock().now().nanoseconds * 1.0e-9
 
@@ -121,7 +147,7 @@ def _normalize_frame_id(frame_id: str) -> str:
 
 def _module_state_from_checkpoint(checkpoint: Any, agent: str) -> dict[str, torch.Tensor]:
     if isinstance(checkpoint, dict):
-        for key in ("motion_context_modules", "paper_intent_modules", "modules", "model", "models"):
+        for key in ("paper_intent_modules", "modules", "model", "models"):
             modules = checkpoint.get(key)
             if isinstance(modules, dict):
                 if agent in modules and isinstance(modules[agent], dict):
@@ -147,9 +173,11 @@ def _module_state_from_checkpoint(checkpoint: Any, agent: str) -> dict[str, torc
 
 
 def _maybe_load_motion_context_scale(cfg: dict[str, Any], *, device: torch.device) -> torch.Tensor:
-    """Load the frozen motion-context scale saved next to the policy checkpoint."""
+    """Load the checkpoint's motion-context scale for fixed deployment use."""
 
     comm_cfg = cfg.setdefault("communication", {})
+    mode = str(comm_cfg.get("mode", "motion_context"))
+    requires_calibrated_context = mode in ("context_only", "motion_context", "motion_context_la", "motion_context_s")
     configured = comm_cfg.get("context_scale", [0.10, 0.50, 0.50])
     scale = _tensor(configured, device=device, shape=(3,))
     sidecar_path = comm_cfg.get("motion_context_sidecar", None)
@@ -159,6 +187,11 @@ def _maybe_load_motion_context_scale(cfg: dict[str, Any], *, device: torch.devic
             root, ext = os.path.splitext(str(checkpoint))
             sidecar_path = f"{root}_motion_context{ext or '.pt'}"
     if not sidecar_path or not os.path.exists(str(sidecar_path)):
+        if requires_calibrated_context:
+            raise RuntimeError(
+                "A calibrated motion-context sidecar is required for deployment mode "
+                f"{mode!r}, but it was not found: {sidecar_path or '<unset>'}"
+            )
         print(
             "[WARN] Motion-context sidecar not found; using configured fallback scale "
             f"{scale.detach().cpu().tolist()}: {sidecar_path or '<unset>'}"
@@ -167,6 +200,8 @@ def _maybe_load_motion_context_scale(cfg: dict[str, Any], *, device: torch.devic
     try:
         state = torch.load(str(sidecar_path), map_location=device)
     except Exception as exc:
+        if requires_calibrated_context:
+            raise RuntimeError(f"Failed to load required motion-context sidecar: {sidecar_path}") from exc
         print(f"[WARN] Failed to load motion-context sidecar {sidecar_path}: {exc}")
         return scale.clamp_min(1.0e-6)
     if isinstance(state, dict):
@@ -177,7 +212,17 @@ def _maybe_load_motion_context_scale(cfg: dict[str, Any], *, device: torch.devic
         if raw is not None:
             loaded = torch.as_tensor(raw, dtype=torch.float32, device=device).flatten()
             if loaded.numel() >= 3:
+                calibrated = bool(state.get("context_calibrated", False))
+                # The scale keeps adapting during training. Deployment freezes
+                # the checkpoint's saved value by using it as a constant tensor.
+                if requires_calibrated_context and not calibrated:
+                    raise RuntimeError(
+                        "The deployment checkpoint contains unfinished adaptive context calibration: "
+                        f"calibrated={calibrated}, sidecar={sidecar_path}"
+                    )
                 return loaded[:3].clamp_min(1.0e-6)
+    if requires_calibrated_context:
+        raise RuntimeError(f"Required motion-context sidecar has no valid running_scale: {sidecar_path}")
     print(f"[WARN] Motion-context sidecar has no valid running_scale: {sidecar_path}")
     return scale.clamp_min(1.0e-6)
 
@@ -208,41 +253,78 @@ def _make_policy(agent: str, cfg: dict[str, Any], checkpoint: Any, *, device: to
     return model
 
 
-class OpenArmLiftDeployNode:
+class OpenArmPaperReLiftDeployNode:
     """ROS2 node that turns AprilTag detections and TF into policy commands."""
 
     def __init__(self, cfg: dict[str, Any]):
+        cfg = restore_training_contract(cfg)
         import rclpy
         from apriltag_msgs.msg import AprilTagDetectionArray
+        from geometry_msgs.msg import TransformStamped
+        from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
         from rclpy.time import Time
         from sensor_msgs.msg import JointState
-        from geometry_msgs.msg import TransformStamped
+        from std_msgs.msg import Float64MultiArray, String
         from tf2_ros import Buffer, StaticTransformBroadcaster, TransformListener
         from trajectory_msgs.msg import JointTrajectory
 
         self.rclpy = rclpy
         self.Time = Time
         self.JointTrajectory = JointTrajectory
-        self.JointTrajectoryPoint = __import__("trajectory_msgs.msg", fromlist=["JointTrajectoryPoint"]).JointTrajectoryPoint
+        self.Float64MultiArray = Float64MultiArray
+        self.JointTrajectoryPoint = __import__(
+            "trajectory_msgs.msg", fromlist=["JointTrajectoryPoint"]
+        ).JointTrajectoryPoint
         self.DurationMsg = __import__("builtin_interfaces.msg", fromlist=["Duration"]).Duration
         self.cfg = cfg
         self.device = torch.device(str(cfg.get("policy", {}).get("device", "cpu")))
+        if self.device.type == "cpu":
+            torch.set_num_threads(int(cfg["policy"].get("cpu_threads", 1)))
 
         self.node = rclpy.create_node("openarm_lift_deploy")
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self.base_frame = str(cfg.get("base_frame", "openarm_body_link0"))
+        self.telemetry = DeploymentTelemetry(self.node, self.base_frame)
         self.rate_hz = float(cfg.get("control_rate_hz", 60.0))
         self.dt = 1.0 / max(self.rate_hz, 1.0e-6)
         self.dry_run = bool(cfg.get("dry_run", True))
-        self.context_scale = _maybe_load_motion_context_scale(cfg, device=self.device)
+        self.control_steps = 0
+        self._last_policy_tick: float | None = None
+        self.arm_command_type = str(cfg["action"].get("arm_command_type", "joint_trajectory"))
+        if self.arm_command_type not in ("joint_trajectory", "forward_position"):
+            raise ValueError("Unknown arm command type")
+        self.motion_context_representation = str(cfg.get("communication", {}).get("representation", "trend"))
+        if self.motion_context_representation != "trend":
+            raise NotImplementedError(
+                "absolute_fixed and signed_twist are simulation-only comparisons; "
+                "deployment currently computes only the trend payload."
+            )
+        self.context_scale = (
+            _maybe_load_motion_context_scale(cfg, device=self.device)
+            if self.motion_context_representation != "trend"
+            else torch.ones(3, dtype=torch.float32, device=self.device)
+        )
         self._validate_calibration_or_dry_run()
 
         topics = cfg["topics"]
-        self.node.create_subscription(JointState, topics["joint_states"], self._on_joint_state, 10)
+        self.hardware_limits: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+        self.node.create_subscription(
+            String,
+            topics.get("robot_description", "/robot_description"),
+            self._on_robot_description,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self.node.create_subscription(JointState, topics["joint_states"], self._on_joint_state, qos_profile_sensor_data)
         command_topics = topics["commands"]
         self.command_pubs = {
-            name: self.node.create_publisher(JointTrajectory, str(topic), 10)
+            name: self.node.create_publisher(
+                Float64MultiArray
+                if name.endswith("_arm") and self.arm_command_type == "forward_position"
+                else JointTrajectory,
+                str(topic),
+                1,
+            )
             for name, topic in command_topics.items()
         }
 
@@ -271,8 +353,6 @@ class OpenArmLiftDeployNode:
 
         self.camera_names = list(cfg["frames"]["cameras"].keys())
         self.camera_frames = [str(cfg["frames"]["cameras"][name]) for name in self.camera_names]
-        tag_prefix_cfg = cfg["frames"].get("tag_frame_prefixes", {})
-        self.tag_frame_prefixes = [str(tag_prefix_cfg.get(name, "apriltag_")) for name in self.camera_names]
         mount_cfg = cfg["frames"].get("camera_mounts", {})
         self.camera_mount_frames = [str(mount_cfg.get(name, self.base_frame)) for name in self.camera_names]
         self.require_matching_detection_frame = bool(
@@ -281,17 +361,6 @@ class OpenArmLiftDeployNode:
         self._validated_camera_tf_chains: set[int] = set()
         self.tag_ids = [int(v) for v in cfg["apriltag"]["ids"]]
         self.tag_id_to_index = {tag_id: idx for idx, tag_id in enumerate(self.tag_ids)}
-        tag_frames = {
-            f"{prefix}{tag_id:02d}"
-            for prefix in self.tag_frame_prefixes
-            for tag_id in self.tag_ids
-        }
-        expected_tag_frames = len(self.tag_frame_prefixes) * len(self.tag_ids)
-        if len(tag_frames) != expected_tag_frames:
-            raise ValueError(
-                "frames.tag_frame_prefixes must produce unique AprilTag TF child frames "
-                "for every camera."
-            )
         # Detection arrays are published immediately before apriltag_ros sends
         # their matching TF transforms. Keep only IDs and image timestamps in
         # the callback, then resolve T_camera_tag from the control tick after
@@ -303,22 +372,32 @@ class OpenArmLiftDeployNode:
                 AprilTagDetectionArray,
                 topic,
                 lambda msg, idx=camera_index: self._on_apriltag(msg, idx),
-                10,
+                qos_profile_sensor_data,
             )
 
         checkpoint_path = str(cfg.get("checkpoint", ""))
         if not checkpoint_path:
             raise ValueError("config.checkpoint is required")
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         self.policies = {
             "left_arm": _make_policy("left_arm", cfg, checkpoint, device=self.device),
             "right_arm": _make_policy("right_arm", cfg, checkpoint, device=self.device),
         }
-        actor_dim = int(cfg["policy"].get("own_observation_dim", 30)) + int(cfg["policy"].get("communication_feature_dim", 30))
+        actor_dim = int(cfg["policy"].get("own_observation_dim", 30)) + int(
+            cfg["policy"].get("communication_feature_dim", 30)
+        )
         normalize_obs = bool(cfg["policy"].get("use_checkpoint_state_normalizer", True))
         self.normalizers = {
-            "left_arm": ObservationNormalizer(checkpoint, "left_arm", actor_dim, device=self.device, enabled=normalize_obs),
-            "right_arm": ObservationNormalizer(checkpoint, "right_arm", actor_dim, device=self.device, enabled=normalize_obs),
+            agent: ObservationNormalizer(
+                checkpoint,
+                agent,
+                actor_dim,
+                device=self.device,
+                enabled=normalize_obs,
+                epsilon=float(cfg["policy"].get("normalizer_epsilon", 1.0e-8)),
+                clip_threshold=float(cfg["policy"].get("normalizer_clip_threshold", 5.0)),
+            )
+            for agent in ("left_arm", "right_arm")
         }
         missing_normalizers = [agent for agent, normalizer in self.normalizers.items() if not normalizer.loaded]
         if missing_normalizers:
@@ -368,15 +447,17 @@ class OpenArmLiftDeployNode:
 
         self.timer = self.node.create_timer(self.dt, self._control_tick)
         self.node.get_logger().info(
-            "OpenArm Lift deploy node ready "
-            f"(dry_run={self.dry_run}, cameras={self.camera_names}, tags={self.tag_ids})"
+            f"OpenArm Lift deploy node ready (dry_run={self.dry_run}, cameras={self.camera_names}, tags={self.tag_ids})"
         )
 
     def _validate_calibration_or_dry_run(self) -> None:
         tag_pos = torch.as_tensor(self.cfg.get("apriltag", {}).get("tag_pos_box", []), dtype=torch.float32)
         left_grip = torch.as_tensor(self.cfg.get("grip_targets", {}).get("left_pos_box", []), dtype=torch.float32)
         right_grip = torch.as_tensor(self.cfg.get("grip_targets", {}).get("right_pos_box", []), dtype=torch.float32)
-        looks_empty = tag_pos.numel() == 0 or float(tag_pos.abs().sum() + left_grip.abs().sum() + right_grip.abs().sum()) <= 1.0e-9
+        looks_empty = (
+            tag_pos.numel() == 0
+            or float(tag_pos.abs().sum() + left_grip.abs().sum() + right_grip.abs().sum()) <= 1.0e-9
+        )
         if looks_empty and not self.dry_run:
             raise RuntimeError(
                 "Deploy calibration still looks like placeholder zeros. Fill T_box_tag and T_box_grip in the YAML, "
@@ -384,7 +465,18 @@ class OpenArmLiftDeployNode:
             )
 
     def _on_joint_state(self, msg) -> None:
-        self.last_joint_state = JointSnapshot(stamp=_now_sec(self.node), msg=msg)
+        self.last_joint_state = JointSnapshot(stamp=self._message_stamp_sec(msg), msg=msg)
+
+    def _on_robot_description(self, msg) -> None:
+        try:
+            limits = {}
+            for name, joints in self.cfg["joints"].items():
+                lo, hi = joint_position_limits(msg.data, joints)
+                limits[name] = (_tensor(lo, device=self.device), _tensor(hi, device=self.device))
+            self.hardware_limits = limits
+        except (ValueError, RuntimeError) as exc:
+            self.hardware_limits.clear()
+            self.node.get_logger().error(f"Invalid robot_description: {exc}")
 
     def _on_apriltag(self, msg, camera_index: int) -> None:
         expected_frame = _normalize_frame_id(self.camera_frames[camera_index])
@@ -420,11 +512,7 @@ class OpenArmLiftDeployNode:
         stamp_sec: float | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor] | None:
         try:
-            stamp = (
-                self.Time()
-                if stamp_sec is None
-                else self.Time(nanoseconds=max(0, int(stamp_sec * 1.0e9)))
-            )
+            stamp = self.Time() if stamp_sec is None else self.Time(nanoseconds=max(0, int(stamp_sec * 1.0e9)))
             transform = self.tf_buffer.lookup_transform(parent_frame, child_frame, stamp)
         except Exception as exc:
             when = "latest" if stamp_sec is None else f"t={stamp_sec:.6f}"
@@ -477,12 +565,13 @@ class OpenArmLiftDeployNode:
             if name not in index:
                 raise RuntimeError(f"JointState is missing joint {name!r}")
             i = index[name]
+            if i >= len(msg.velocity) or i >= len(msg.position):
+                raise ValueError(f"JointState lacks position/velocity for {name!r}")
             pos.append(float(msg.position[i]))
-            if i < len(msg.velocity):
-                vel.append(float(msg.velocity[i]))
-            else:
-                vel.append(0.0)
-        return torch.tensor(pos, dtype=torch.float32, device=self.device), torch.tensor(vel, dtype=torch.float32, device=self.device)
+            vel.append(float(msg.velocity[i]))
+        return torch.tensor(pos, dtype=torch.float32, device=self.device), torch.tensor(
+            vel, dtype=torch.float32, device=self.device
+        )
 
     def _collect_apriltag_tensors(
         self,
@@ -504,9 +593,8 @@ class OpenArmLiftDeployNode:
             for tag_idx, stamp in detection_map.items():
                 if not message_is_fresh(now, stamp, max_detection_age):
                     continue
-                tag_id = self.tag_ids[tag_idx]
-                tag_frame = f"{self.tag_frame_prefixes[camera_idx]}{tag_id:02d}"
-                pose = self._lookup_transform_pose(camera_frame, tag_frame, stamp)
+                tag_frames = self.cfg["apriltag"]["frames_by_camera"][self.camera_names[camera_idx]]
+                pose = self._lookup_transform_pose(camera_frame, str(tag_frames[tag_idx]), stamp)
                 if pose is None:
                     continue
                 pos, quat = pose
@@ -545,8 +633,7 @@ class OpenArmLiftDeployNode:
                 mount_to_camera = self._lookup_transform_pose(mount_frame, camera_frame)
                 if mount_to_camera is None:
                     self.node.get_logger().error(
-                        f"Camera TF chain is incomplete for {camera_name}: "
-                        f"missing {mount_frame}->{camera_frame}",
+                        f"Camera TF chain is incomplete for {camera_name}: missing {mount_frame}->{camera_frame}",
                         throttle_duration_sec=2.0,
                     )
                     return None
@@ -564,12 +651,17 @@ class OpenArmLiftDeployNode:
 
     def _update_ee_motion(self, agent: str, ee_pos: torch.Tensor, ee_quat: torch.Tensor) -> tuple[torch.Tensor, float]:
         state = self.arm_state[agent]
-        if state.prev_ee_pos is None:
+        stamp = self.last_joint_state.stamp
+        elapsed = stamp - state.motion_stamp if state.motion_stamp is not None else 0.0
+        if state.prev_ee_pos is None or elapsed <= 0.0:
             lin_vel = torch.zeros(3, dtype=torch.float32, device=self.device)
             ang_speed = 0.0
         else:
-            lin_vel = (ee_pos - state.prev_ee_pos) / self.dt
-            ang_speed = float(quat_angle_error_wxyz(state.prev_ee_quat.unsqueeze(0), ee_quat.unsqueeze(0)).item() / self.dt)
+            lin_vel = (ee_pos - state.prev_ee_pos) / elapsed
+            ang_speed = float(
+                quat_angle_error_wxyz(state.prev_ee_quat.unsqueeze(0), ee_quat.unsqueeze(0)).item() / elapsed
+            )
+        state.motion_stamp = stamp
         state.prev_ee_pos = ee_pos.detach().clone()
         state.prev_ee_quat = ee_quat.detach().clone()
         state.ee_lin_vel = lin_vel
@@ -589,21 +681,47 @@ class OpenArmLiftDeployNode:
 
         prev_action = state.prev_action if state.prev_action is not None else torch.zeros(8, device=self.device)
         current_action = action if action is not None else prev_action
-        action_change = torch.linalg.vector_norm(current_action[:7] - prev_action[:7]).reshape(())
+        action_variation = full_action_variation(
+            current_action.reshape(1, -1),
+            prev_action.reshape(1, -1),
+        ).reshape(1)
+        effective_variation = action_variation if state.action_variation_valid else torch.zeros_like(action_variation)
+        state.action_variation_valid = True
         raw = torch.stack(
             [
                 torch.linalg.vector_norm(lin_vel),
                 torch.tensor(float(state.ee_ang_speed), dtype=torch.float32, device=self.device),
-                action_change,
+                effective_variation.reshape(()),
             ]
         )
-        context = motion_context_from_raw(
-            raw[0:1],
-            raw[1:2],
-            raw[2:3],
-            self.context_scale,
-            float(comm_cfg.get("context_norm_max", 1.5)),
-        )
+        beta = min(max(float(comm_cfg.get("context_trend_beta", 0.80)), 0.0), 0.9999)
+        if state.motion_signal_ema is None:
+            signal_ema = raw
+        else:
+            signal_ema = beta * state.motion_signal_ema + (1.0 - beta) * raw
+        state.motion_signal_ema = signal_ema.detach().clone()
+
+        horizon = max(int(comm_cfg.get("context_trend_horizon", 5)), 1)
+        state.motion_signal_history.append(signal_ema.detach().clone())
+        if len(state.motion_signal_history) > horizon + 1:
+            del state.motion_signal_history[: len(state.motion_signal_history) - (horizon + 1)]
+        if len(state.motion_signal_history) <= horizon:
+            context = torch.zeros(3, dtype=torch.float32, device=self.device)
+        else:
+            epsilon = torch.tensor(
+                [
+                    float(comm_cfg.get("context_trend_linear_epsilon", 0.01)),
+                    float(comm_cfg.get("context_trend_angular_epsilon", 0.05)),
+                    float(comm_cfg.get("context_trend_action_epsilon", 0.01)),
+                ],
+                dtype=torch.float32,
+                device=self.device,
+            ).clamp_min(1.0e-12)
+            context = relative_motion_trend(
+                signal_ema,
+                state.motion_signal_history[-(horizon + 1)],
+                epsilon,
+            )
 
         width = int(self.cfg["policy"].get("communication_feature_dim", 30))
         mode = str(comm_cfg.get("mode", "motion_context"))
@@ -613,8 +731,8 @@ class OpenArmLiftDeployNode:
             payload = motion
         elif mode == "context_only":
             payload = context
-        elif mode == "motion_context":
-            payload = torch.cat([motion, context], dim=-1)
+        elif mode in MOTION_CONTEXT_MODES:
+            payload = motion_context_payload(motion, context, mode)
         elif mode == "previous_action":
             payload = prev_action
         else:
@@ -654,16 +772,20 @@ class OpenArmLiftDeployNode:
                 target_delta,
                 target_quat_error,
                 closure,
-                ee_lin_vel,
+                (ee_lin_vel / max(float(self.cfg["policy"].get("ee_vel_scale", 1.0)), 1.0e-6)).clamp(-10.0, 10.0),
             ],
             dim=0,
         )
 
     def _policy_action(self, agent: str, own_obs: torch.Tensor, partner_message: torch.Tensor) -> torch.Tensor:
         states = torch.cat([own_obs, partner_message], dim=0).unsqueeze(0)
+        if not bool(torch.isfinite(states).all()):
+            raise ValueError("Non-finite actor observation")
         states = self.normalizers[agent](states)
         with torch.no_grad():
             mean, _, _ = self.policies[agent].compute({"states": states}, role="policy")
+        if not bool(torch.isfinite(mean).all()):
+            raise ValueError("Non-finite policy output")
         return torch.clamp(mean.squeeze(0), -1.0, 1.0)
 
     def _apply_incremental_action(self, agent: str, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -672,6 +794,8 @@ class OpenArmLiftDeployNode:
         if not state.target_initialized:
             arm_joints = self.left_arm_joints if agent == "left_arm" else self.right_arm_joints
             state.q_target = self._joint_values(arm_joints)[0]
+            if bool((torch.abs(state.q_target - default) > self._safety_cfg("start_pose_tolerance_rad", 0.05)).any()):
+                raise ValueError("Move the robot to the checkpoint task start pose before policy control")
             state.target_initialized = True
         action_cfg = self.cfg["action"]
         target_limit = float(action_cfg.get("action_scale", 0.7))
@@ -694,16 +818,13 @@ class OpenArmLiftDeployNode:
         measured_q = self._joint_values(arm_joints)[0]
         max_tracking_error = self._safety_cfg("max_tracking_error", 0.08)
 
-        state.q_target = torch.maximum(
-            torch.minimum(
-                state.q_target,
-                measured_q + max_tracking_error,
-            ),
-            measured_q - max_tracking_error,
-        )
+        if bool((torch.abs(state.q_target - measured_q) > max_tracking_error).any()):
+            raise ValueError("Joint tracking error exceeded the configured limit")
 
         eps = float(action_cfg.get("gripper_switch_epsilon", 0.02))
         state.gripper_closed = update_gripper_closed(state.gripper_closed, action[7], eps)
+        if self.control_steps < int(action_cfg.get("reset_grace_steps", 20)):
+            state.gripper_closed = False
         grip_target = (
             float(action_cfg.get("gripper_close_target", 0.0))
             if state.gripper_closed
@@ -717,19 +838,7 @@ class OpenArmLiftDeployNode:
         msg = self.JointTrajectory()
         msg.joint_names = joint_names
 
-        measured, _ = self._joint_values(joint_names)
-
-        start_time = 0.02
-        target_time = float(
-            self.cfg["action"].get("command_time_from_start", 0.15)
-        )
-
-        start = self.JointTrajectoryPoint()
-        start.positions = measured.detach().cpu().tolist()
-        start.time_from_start = self.DurationMsg(
-            sec=int(start_time),
-            nanosec=int((start_time % 1.0) * 1.0e9),
-        )
+        target_time = float(self.cfg["action"].get("command_time_from_start", self.dt))
 
         target = self.JointTrajectoryPoint()
         target.positions = positions.detach().cpu().tolist()
@@ -738,11 +847,29 @@ class OpenArmLiftDeployNode:
             nanosec=int((target_time % 1.0) * 1.0e9),
         )
 
-        msg.points = [start, target]
+        msg.points = [target]
         return msg
 
-    def _publish_command(self, left_q: torch.Tensor, right_q: torch.Tensor, left_grip: torch.Tensor, right_grip: torch.Tensor) -> None:
+    def _publish_command(
+        self, left_q: torch.Tensor, right_q: torch.Tensor, left_grip: torch.Tensor, right_grip: torch.Tensor
+    ) -> None:
+        commands = {
+            "left_arm": (self.left_arm_joints, left_q),
+            "right_arm": (self.right_arm_joints, right_q),
+            "left_gripper": (self.left_gripper_joints, left_grip),
+            "right_gripper": (self.right_gripper_joints, right_grip),
+        }
+        if not self.dry_run and not self.hardware_limits:
+            raise ValueError("No valid live robot_description joint limits received")
+        for name, (joint_names, positions) in commands.items():
+            if name in self.hardware_limits:
+                lower, upper = self.hardware_limits[name]
+                commands[name] = (joint_names, positions.clamp(min=lower, max=upper))
+        self.telemetry.target(commands)
         if self.dry_run:
+            left_q, right_q = commands["left_arm"][1], commands["right_arm"][1]
+            left_grip, right_grip = commands["left_gripper"][1], commands["right_gripper"][1]
+            self.telemetry.state("dry_run", "Policy candidate only; motor commands are disabled")
             now = time.time()
             if now - self.last_command_time > 1.0:
                 self.node.get_logger().info(
@@ -753,37 +880,61 @@ class OpenArmLiftDeployNode:
                 )
                 self.last_command_time = now
             return
-        commands = {
-            "left_arm": (self.left_arm_joints, left_q),
-            "right_arm": (self.right_arm_joints, right_q),
-            "left_gripper": (self.left_gripper_joints, left_grip),
-            "right_gripper": (self.right_gripper_joints, right_grip),
-        }
         for name, (joint_names, positions) in commands.items():
-            self.command_pubs[name].publish(self._trajectory_message(joint_names, positions))
+            if name.endswith("_arm") and self.arm_command_type == "forward_position":
+                message = self.Float64MultiArray()
+                message.data = positions.detach().cpu().tolist()
+            else:
+                message = self._trajectory_message(joint_names, positions)
+            self.command_pubs[name].publish(message)
+        self.telemetry.state("publishing", "Targets sent to arm and gripper controllers")
 
     def _control_tick(self) -> None:
+        try:
+            self._policy_tick()
+        except (ValueError, RuntimeError) as exc:
+            self._last_policy_tick = None
+            self.telemetry.state("held", str(exc))
+            self.node.get_logger().error(f"Policy command held: {exc}", throttle_duration_sec=1.0)
+
+    def _policy_tick(self) -> None:
+        if not self.dry_run and not self.hardware_limits:
+            raise ValueError("Waiting for live robot_description joint limits")
         if not self._is_joint_state_fresh():
+            self.telemetry.state("held", "Waiting for fresh joint states")
             return
-        left_ee = self._lookup_pose(str(self.cfg["frames"]["left_ee"]))
-        right_ee = self._lookup_pose(str(self.cfg["frames"]["right_ee"]))
+        joint_stamp = self.last_joint_state.stamp
+        left_ee = self._lookup_pose(str(self.cfg["frames"]["left_ee"]), joint_stamp)
+        right_ee = self._lookup_pose(str(self.cfg["frames"]["right_ee"]), joint_stamp)
         if left_ee is None or right_ee is None:
+            self.telemetry.state("held", "Waiting for end-effector TF at the joint-state timestamp")
             return
         tag_pos_camera, tag_quat_camera, visible, camera_stamps = self._collect_apriltag_tensors()
         min_visible_tags = int(self.cfg.get("safety", {}).get("min_visible_tags", 1))
         visible_tags = visible_tag_count(visible)
         if visible_tags < min_visible_tags:
+            self.telemetry.state("held", "Not enough fresh AprilTag detections")
             self.node.get_logger().warn(
-                f"Visible AprilTags below safety threshold ({visible_tags} < {min_visible_tags}); holding previous command",
+                f"Visible AprilTags below safety threshold ({visible_tags} < {min_visible_tags}); "
+                "holding previous command",
                 throttle_duration_sec=1.0,
             )
             return
         camera_poses = self._camera_poses(camera_stamps)
         if camera_poses is None:
+            self.telemetry.state("held", "Waiting for camera TF at the image timestamp")
             return
 
         left_ee_pos, left_ee_quat = left_ee
         right_ee_pos, right_ee_quat = right_ee
+        now = _now_sec(self.node)
+        if self._last_policy_tick is None or now - self._last_policy_tick > 2.0 * self.dt:
+            self.control_steps = 0
+            for agent, state in self.arm_state.items():
+                self.arm_state[agent] = ArmState(
+                    q_target=state.q_target.clone(), prev_action=torch.zeros(8, device=self.device)
+                )
+                self.communication_buffer[agent].zero_()
         self._update_ee_motion("left_arm", left_ee_pos, left_ee_quat)
         self._update_ee_motion("right_arm", right_ee_pos, right_ee_quat)
 
@@ -795,11 +946,34 @@ class OpenArmLiftDeployNode:
             visible,
         )
         left_own = self._own_obs("left_arm", left_ee_pos, left_ee_quat, left_grip_pos, left_grip_quat)
+        if visible_tags > 0 and self.telemetry.needs_poses():
+            box_pose = self.pose_provider.estimate_box_pose(
+                camera_poses[0],
+                camera_poses[1],
+                tag_pos_camera,
+                tag_quat_camera,
+                visible,
+            )
+            measurement_stamp = min(
+                stamp
+                for camera, detections in enumerate(self.latest_detection_stamps)
+                for tag, stamp in detections.items()
+                if bool(visible[camera, tag])
+            )
+            self.telemetry.poses(
+                measurement_stamp,
+                {
+                    "box": box_pose,
+                    "left_grasp": (left_grip_pos, left_grip_quat),
+                    "right_grasp": (right_grip_pos, right_grip_quat),
+                },
+            )
         right_own = self._own_obs("right_arm", right_ee_pos, right_ee_quat, right_grip_pos, right_grip_quat)
         max_target_delta_norm = self._safety_cfg("max_target_delta_norm", 1.0)
         if not target_delta_within_limit(left_own[22:25], max_target_delta_norm) or not target_delta_within_limit(
             right_own[22:25], max_target_delta_norm
         ):
+            self.telemetry.state("held", "Grasp target delta exceeded the configured safety limit")
             self.node.get_logger().warn(
                 "Grasp target delta exceeded safety limit; holding previous command",
                 throttle_duration_sec=1.0,
@@ -817,6 +991,8 @@ class OpenArmLiftDeployNode:
         left_q, left_grip = self._apply_incremental_action("left_arm", left_action)
         right_q, right_grip = self._apply_incremental_action("right_arm", right_action)
         self._publish_command(left_q, right_q, left_grip, right_grip)
+        self.control_steps += 1
+        self._last_policy_tick = now
 
     def spin(self) -> None:
         try:
@@ -833,9 +1009,15 @@ def main() -> None:
     parser.add_argument("--checkpoint", default=None, help="Override checkpoint path from YAML")
     parser.add_argument("--dry-run", action="store_true", help="Log commands instead of publishing")
     parser.add_argument("--publish", action="store_true", help="Publish JointTrajectory commands")
+    parser.add_argument(
+        "--export-config", type=Path, help="Export checkpoint-matched deployment and detector YAMLs without ROS"
+    )
+    parser.add_argument(
+        "--validate-checkpoint",
+        action="store_true",
+        help="Load both policies and normalizers without ROS or motor commands",
+    )
     args = parser.parse_args()
-
-    import rclpy
 
     cfg = _load_yaml(args.config)
     if args.checkpoint is not None:
@@ -845,10 +1027,49 @@ def main() -> None:
     if args.publish:
         cfg["dry_run"] = False
 
+    if args.export_config is not None or args.validate_checkpoint:
+        cfg = restore_training_contract(cfg)
+        checkpoint = torch.load(cfg["checkpoint"], map_location="cpu", weights_only=False)
+        width = cfg["policy"]["own_observation_dim"] + cfg["policy"]["communication_feature_dim"]
+        for agent in ("left_arm", "right_arm"):
+            policy = _make_policy(agent, cfg, checkpoint, device=torch.device("cpu"))
+            normalizer = ObservationNormalizer(
+                checkpoint,
+                agent,
+                width,
+                device=torch.device("cpu"),
+                enabled=cfg["policy"]["use_checkpoint_state_normalizer"],
+                epsilon=cfg["policy"]["normalizer_epsilon"],
+                clip_threshold=cfg["policy"]["normalizer_clip_threshold"],
+            )
+            if not normalizer.loaded:
+                raise ValueError(f"Missing or invalid {agent} normalization state")
+            with torch.no_grad():
+                mean, _, _ = policy.compute({"states": normalizer(torch.zeros(1, width))}, role="policy")
+            if mean.shape != (1, 8) or not bool(torch.isfinite(mean).all()):
+                raise ValueError(f"Invalid {agent} inference output")
+        print(f"Validated both Lift policies: {width}D input, 8D output, {cfg['control_rate_hz']:g}Hz")
+        if args.export_config is not None:
+            import yaml
+
+            cfg["dry_run"] = True
+            output = args.export_config.resolve()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with output.open("w") as stream:
+                yaml.safe_dump(cfg, stream, sort_keys=False)
+            for camera in cfg["frames"]["cameras"]:
+                with output.with_name(f"{output.stem}_{camera}_apriltag.yaml").open("w") as stream:
+                    yaml.safe_dump(apriltag_detector_parameters(cfg, camera), stream, sort_keys=False)
+            print(f"Exported {output} and {len(cfg['frames']['cameras'])} camera detector configurations")
+        return
+
+    import rclpy
+
     rclpy.init()
 
-    node = OpenArmLiftDeployNode(cfg)
+    node = OpenArmPaperReLiftDeployNode(cfg)
     node.spin()
+
 
 if __name__ == "__main__":
     main()

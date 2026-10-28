@@ -1,7 +1,7 @@
 """Proprioceptive Motion Context Sharing skrl MAPPO model.
 
 이 파일은 motion-context task용 actor/critic network와 custom MAPPO update를 담고 있다.
-이 task에서는 learned latent mode를 학습하지 않고, 환경이 직접 계산한
+환경이 직접 계산한
 communication message z=[signed EE motion 3D, proprioceptive motion context 3D]를 공유한다.
 
 최종 communication baseline:
@@ -21,7 +21,7 @@ communication message z=[signed EE motion 3D, proprioceptive motion context 3D]�
     3. CriticValueModel
        - centralized critic value network.
     4. MotionContextMAPPO
-       - skrl MAPPO update without auxiliary communication losses.
+       - auxiliary classifier 없이 동작하는 skrl MAPPO update.
     5. build_motion_context_mappo_agent
        - env/cfg에서 dimension을 읽고 left/right model과 memory를 생성.
 """
@@ -56,6 +56,12 @@ def _build_mlp(input_dim: int, hidden_sizes: list[int], output_dim: int) -> nn.S
     return nn.Sequential(*layers)
 
 
+def _gripper_actor_input(hidden: torch.Tensor, partner_feat: torch.Tensor, local_only: bool) -> torch.Tensor:
+    """Keep the partner embedding for arm control while optionally hiding it from the gripper."""
+
+    return torch.cat([hidden, torch.zeros_like(partner_feat) if local_only else partner_feat], dim=-1)
+
+
 class MotionContextPolicyModel(GaussianMixin, Model):
     """Policy with partner z=[signed EE motion, proprioceptive motion context]."""
 
@@ -78,6 +84,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         initial_log_std: float = 0.0,
         partner_intent_embed_dim: int = 32,
         communication_feature_dim: int | None = None,
+        arm_only_actions: bool = False,
     ):
         Model.__init__(
             self,
@@ -96,6 +103,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
 
         self.communication_mode = str(communication_mode)
         self.agent_id = str(agent_id)
+        self.arm_only_actions = bool(arm_only_actions)
         self.own_observation_dim = int(own_observation_dim)
         self.motion_intent_dim = int(motion_intent_dim)
         self.motion_context_dim = int(motion_context_dim)
@@ -113,8 +121,9 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         self.own_backbone = _build_mlp(self.own_observation_dim, hidden_sizes, hidden_sizes[-1])
         self.actor_feature_dim = int(hidden_sizes[-1])
         self.policy_feature_dim = self.actor_feature_dim
-        if self.num_actions < 2:
-            raise ValueError(f"Motion-context policy expects arm actions plus gripper action, got {self.num_actions}")
+        if self.num_actions < 1 or (not self.arm_only_actions and self.num_actions < 2):
+            layout = "arm-only" if self.arm_only_actions else "arm plus gripper"
+            raise ValueError(f"Invalid {layout} policy action dimension: {self.num_actions}")
         self.partner_intent_encoder = None
         if self.uses_context:
             self.partner_intent_encoder = nn.Sequential(
@@ -127,15 +136,21 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         self.actor_action_input_dim = self.policy_feature_dim
         if self.uses_context:
             self.actor_action_input_dim += self.partner_intent_embed_dim
-        self.arm_action_head = nn.Linear(self.actor_action_input_dim, self.num_actions - 1)
-        # gripper timing은 local proprioception에 강하게 의존하므로 arm action과 head를 분리한다.
-        # own_obs layout: target_delta_b=22:25, closure=26:27, ee_lin_vel_b=27:30.
-        self.gripper_head_input_dim = self.actor_action_input_dim + 7
-        self.gripper_action_head = nn.Sequential(
-            nn.Linear(self.gripper_head_input_dim, hidden_sizes[-1]),
-            nn.ELU(),
-            nn.Linear(hidden_sizes[-1], 1),
-        )
+        arm_action_dim = self.num_actions if self.arm_only_actions else self.num_actions - 1
+        self.arm_action_head = nn.Linear(self.actor_action_input_dim, arm_action_dim)
+        self.gripper_head_input_dim = 0
+        self.gripper_action_head = None
+        # Opt-in architecture pilot; the default matched Full6D path is unchanged.
+        self.gripper_partner_local_only = False
+        if not self.arm_only_actions:
+            # gripper timing은 local proprioception에 강하게 의존하므로 arm action과 head를 분리한다.
+            # own_obs layout: target_delta_b=22:25, closure=26:27, ee_lin_vel_b=27:30.
+            self.gripper_head_input_dim = self.actor_action_input_dim + 7
+            self.gripper_action_head = nn.Sequential(
+                nn.Linear(self.gripper_head_input_dim, hidden_sizes[-1]),
+                nn.ELU(),
+                nn.Linear(hidden_sizes[-1], 1),
+            )
 
         self.log_std_parameter = nn.Parameter(
             torch.full(size=(self.num_actions,), fill_value=float(initial_log_std), device=self.device)
@@ -179,7 +194,7 @@ class MotionContextPolicyModel(GaussianMixin, Model):
         return torch.clamp(motion, -1.0, 1.0)
 
     def compute(self, inputs, role=""):
-        """Gaussian mean action과 motion-context metadata를 계산한다.
+        """Gaussian mean action과 paper intent metadata를 계산한다.
 
         actor graph의 핵심 branch:
         1. own_obs -> own_backbone (local representation)
@@ -229,34 +244,31 @@ class MotionContextPolicyModel(GaussianMixin, Model):
             actor_input = hidden
         if actor_input.shape[-1] != self.actor_action_input_dim:
             raise RuntimeError("Invalid actor input dimension")
-        own_for_gripper = own_states
-        if own_for_gripper.shape[0] != actor_input.shape[0]:
-            raise RuntimeError(
-                f"Invalid gripper feature batch: own={own_for_gripper.shape[0]}, actor={actor_input.shape[0]}"
-            )
-        if own_for_gripper.shape[-1] < 30:
-            raise RuntimeError(f"Expected paper own_obs >= 30D, got {own_for_gripper.shape[-1]}")
-
-        # 최종 own_obs layout:
-        # 0:3   ee_pos_b
-        # 3:7   ee_quat_b
-        # 7:8   gripper_pos
-        # 8:15  joint_pos
-        # 15:22 joint_vel
-        # 22:25 target_delta_b
-        # 25:26 target_quat_error
-        # 26:27 closure
-        # 27:30 ee_lin_vel_b
-        target_delta_b = own_for_gripper[..., 22:25]
-        closure = own_for_gripper[..., 26:27]
-        ee_lin_vel_b = own_for_gripper[..., 27:30]
-        gripper_parts = [actor_input, closure, target_delta_b, ee_lin_vel_b]
-        gripper_features = torch.cat(gripper_parts, dim=-1)
-        if gripper_features.shape[-1] != self.gripper_head_input_dim:
-            raise RuntimeError("Invalid gripper head input dimension")
         arm_actions = self.arm_action_head(actor_input)
-        gripper_action = self.gripper_action_head(gripper_features)
-        mean_actions = torch.cat([arm_actions, gripper_action], dim=-1)
+        if self.arm_only_actions:
+            mean_actions = arm_actions
+        else:
+            own_for_gripper = own_states
+            if own_for_gripper.shape[0] != actor_input.shape[0]:
+                raise RuntimeError(
+                    f"Invalid gripper feature batch: own={own_for_gripper.shape[0]}, actor={actor_input.shape[0]}"
+                )
+            if own_for_gripper.shape[-1] < 30:
+                raise RuntimeError(f"Expected paper own_obs >= 30D, got {own_for_gripper.shape[-1]}")
+
+            target_delta_b = own_for_gripper[..., 22:25]
+            closure = own_for_gripper[..., 26:27]
+            ee_lin_vel_b = own_for_gripper[..., 27:30]
+            gripper_actor_input = _gripper_actor_input(
+                hidden, partner_intent_feat, self.gripper_partner_local_only
+            )
+            gripper_features = torch.cat([gripper_actor_input, closure, target_delta_b, ee_lin_vel_b], dim=-1)
+            if gripper_features.shape[-1] != self.gripper_head_input_dim:
+                raise RuntimeError("Invalid gripper head input dimension")
+            if self.gripper_action_head is None:
+                raise RuntimeError("Missing gripper action head")
+            gripper_action = self.gripper_action_head(gripper_features)
+            mean_actions = torch.cat([arm_actions, gripper_action], dim=-1)
         if mean_actions.shape[-1] != self.num_actions:
             raise RuntimeError("Invalid action dimension after separate gripper head")
         outputs = {
@@ -422,15 +434,12 @@ class MotionContextMAPPO(MAPPO):
         return 0
 
     def load_intent_heads(self, path: str, strict: bool = False) -> None:
-        """Checkpoint 파일에서 motion-context policy module을 로드한다."""
+        """checkpoint 형식 파일에서 paper intent policy module을 로드한다."""
 
         checkpoint = torch.load(path, map_location=self.device)
         modules = checkpoint.get(
-            "motion_context_modules",
-            checkpoint.get(
-                "paper_intent_modules",
-                checkpoint.get("motion_mode_modules", checkpoint.get("timing_intent_modules", checkpoint)),
-            ),
+            "paper_intent_modules",
+            checkpoint.get("motion_mode_modules", checkpoint.get("timing_intent_modules", checkpoint)),
         )
         for uid in self.possible_agents:
             state_dict = modules.get(uid) if isinstance(modules, dict) else None
@@ -438,13 +447,13 @@ class MotionContextMAPPO(MAPPO):
                 self.policies[uid].load_state_dict(state_dict, strict=strict)
 
     def save_intent_heads(self, path: str, metadata: dict | None = None, metrics: dict | None = None) -> None:
-        """Offline inspection 또는 transfer용 policy module을 저장한다."""
+        """offline inspection 또는 transfer용으로 paper intent policy module을 저장한다."""
 
         torch.save(
             {
                 "metadata": metadata or {},
                 "metrics": metrics or {},
-                "motion_context_modules": {uid: self.policies[uid].state_dict() for uid in self.possible_agents},
+                "paper_intent_modules": {uid: self.policies[uid].state_dict() for uid in self.possible_agents},
             },
             path,
         )
@@ -582,7 +591,7 @@ class MotionContextMAPPO(MAPPO):
                 self.memories[uid].add_samples(**samples)
 
     def _update(self, timestep: int, timesteps: int) -> None:
-        """Policy/value loss만 사용하는 motion-context MAPPO update."""
+        """paper policy/value loss만 사용하는 custom MAPPO update."""
 
         def compute_gae(
             rewards,
@@ -720,7 +729,7 @@ class MotionContextMAPPO(MAPPO):
                         policy_loss = -torch.min(surrogate, surrogate_clipped).mean()
 
                         predicted_values, _, _ = value_model.act({"states": sampled_shared_states}, role="value")
-                        if self._clip_predicted_values:
+                        if self._clip_predicted_values[uid]:
                             predicted_values = sampled["values"] + torch.clip(
                                 predicted_values - sampled["values"],
                                 min=-self._value_clip[uid],
@@ -844,7 +853,7 @@ def _unwrap_env(env):
 
 
 def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContextMAPPO:
-    """Policy, critic, memory, motion-context MAPPO agent를 구성한다."""
+    """policy, critic, memory, paper MAPPO agent를 구성한다."""
 
     cfg = copy.deepcopy(experiment_cfg)
     task_env = _unwrap_env(env)
@@ -856,10 +865,11 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     communication_mode = str(getattr(task_env, "communication_mode", "motion_context"))
     intent_horizon = int(getattr(task_env, "intent_horizon", 1))
     if intent_horizon != 1:
-        raise RuntimeError("Motion-context communication expects intent_horizon=1.")
+        raise RuntimeError("Paper motion-context intent expects intent_horizon=1.")
     motion_intent_dim = int(getattr(task_env, "motion_intent_dim", cfg["models"]["policy"].get("motion_intent_dim", 3)))
     motion_context_dim = int(getattr(task_env, "motion_context_dim", cfg["models"]["policy"].get("motion_context_dim", 3)))
     communication_feature_dim = int(getattr(task_env, "communication_feature_dim", getattr(task_env, "intent_feature_dim", 0)))
+    arm_only_actions = bool(getattr(task_env.cfg, "arm_only_actions", False))
     intent_feature_dim = communication_feature_dim
     own_observation_dim = int(
         getattr(task_env, "own_observation_dim", observation_spaces[possible_agents[0]].shape[0] - intent_feature_dim)
@@ -874,7 +884,7 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     actor_action_input_dim = hidden_sizes[-1]
     if communication_mode != "none" and communication_feature_dim > 0:
         actor_action_input_dim += partner_intent_embed_dim
-    gripper_head_input_dim = actor_action_input_dim + 7
+    gripper_head_input_dim = 0 if arm_only_actions else actor_action_input_dim + 7
     for agent_id in possible_agents:
         obs_dim = observation_spaces[agent_id].shape[0] if hasattr(observation_spaces[agent_id], "shape") else int(observation_spaces[agent_id])
         if obs_dim != expected_actor_dim:
@@ -888,12 +898,13 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
     print(f"[INFO] actor_input_dim={expected_actor_dim}")
     print(f"[INFO] actor_action_input_dim={actor_action_input_dim}")
     print(f"[INFO] gripper_head_input_dim={gripper_head_input_dim}")
+    print(f"[INFO] arm_only_actions={arm_only_actions}")
     print("[INFO] discrete_context_classifier=False")
     print("[INFO] recurrent_intent_encoder=False")
     print(f"[INFO] partner_message_embed_dim={partner_intent_embed_dim}")
     print("[INFO] actor_backbone=agent_specific")
     print("[INFO] action_heads=agent_specific")
-    print("[INFO] proposed z=[base_frame_signed_EE_motion_3D, linear_activity, angular_activity, action_smoothness]")
+    print("[INFO] proposed z=[base_frame_signed_EE_motion_3D, selected_proprioceptive_context_3D]")
     print("[INFO] communication_mode=none is the no-share baseline.")
 
     models = {}
@@ -912,6 +923,7 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
                 agent_id=agent_id,
                 partner_intent_embed_dim=partner_intent_embed_dim,
                 communication_feature_dim=communication_feature_dim,
+                arm_only_actions=arm_only_actions,
                 clip_actions=cfg["models"]["policy"]["clip_actions"],
                 clip_log_std=cfg["models"]["policy"]["clip_log_std"],
                 min_log_std=cfg["models"]["policy"]["min_log_std"],
@@ -956,3 +968,9 @@ def build_motion_context_mappo_agent(env, experiment_cfg: dict) -> MotionContext
         device=env.device,
         cfg=agent_cfg,
     )
+
+
+# Backward-compatible names used by earlier experiment YAMLs and utility scripts.
+PaperIntentPolicyModel = MotionContextPolicyModel
+PaperIntentMAPPO = MotionContextMAPPO
+build_paper_intent_mappo_agent = build_motion_context_mappo_agent

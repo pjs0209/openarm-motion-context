@@ -1,6 +1,6 @@
 """Real-robot state containers used by deployment."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -16,6 +16,11 @@ class ArmState:
     prev_ee_quat: torch.Tensor | None = None
     ee_lin_vel: torch.Tensor | None = None
     ee_ang_speed: float = 0.0
+    motion_stamp: float | None = None
+    action_variation_ema: torch.Tensor | None = None
+    action_variation_valid: bool = False
+    motion_signal_ema: torch.Tensor | None = None
+    motion_signal_history: list[torch.Tensor] = field(default_factory=list)
 
 
 @dataclass

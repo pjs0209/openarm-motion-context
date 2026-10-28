@@ -5,8 +5,8 @@
 
 The export intentionally uses the same task-logic path as training:
 
-* KLT-local ``apriltag_00`` through ``apriltag_02`` poses
-* KLT-local collision grasp targets after the configured z/rotation offset
+* box-local ``apriltag_00`` through ``apriltag_02`` poses
+* box-local USD-authored grasp frames
 * camera and robot frame names copied from the deploy YAML template
 
 Run this with Isaac Lab so the USD stage is available.
@@ -18,7 +18,7 @@ import argparse
 import os
 from pathlib import Path
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -26,21 +26,19 @@ parser.add_argument("--task", type=str, default="Isaac-OpenArm-Lift-v0", help="O
 parser.add_argument(
     "--template",
     type=str,
-    default="scripts/deploy/openarm_lift_deploy.yaml",
+    default="source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real.yaml",
     help="Deploy YAML template to update",
 )
 parser.add_argument(
     "--output",
     type=str,
-    default="scripts/deploy/openarm_lift_deploy.yaml",
+    default="source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real_calibrated.yaml",
     help="Output calibrated deploy YAML",
 )
-AppLauncher.add_app_launcher_args(parser)
+parser.add_argument("--headless", action="store_true", help="Legacy alias; calibration is always headless")
+add_launcher_args(parser)
 args_cli = parser.parse_args()
-args_cli.headless = True
-
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
+args_cli.visualizer = []
 
 import gymnasium as gym
 import torch
@@ -73,8 +71,7 @@ def _load_yaml(path: str) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def main() -> None:
-    env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=1, use_fabric=False)
+def main(env_cfg) -> None:
     env = gym.make(args_cli.task, cfg=env_cfg)
     try:
         env.reset()
@@ -140,5 +137,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
-    simulation_app.close()
+    env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=1, use_fabric=False)
+    with launch_simulation(env_cfg, args_cli):
+        main(env_cfg)

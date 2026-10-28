@@ -1,307 +1,176 @@
 # OpenArm Motion Context
 
-Isaac Lab implementation of **Proprioceptive Motion Context Sharing** for
-OpenArm bimanual manipulation.
+OpenArm V1.0 bimanual deployment with decentralized MAPPO actors and a compact
+partner message: `[m_x, m_y, m_z, translation trend, rotation trend, stability trend]`.
+The Lift actor uses a 30D own observation and a 30-wide partner slot containing
+six populated values, with one policy tick of communication delay.
 
-Each decentralized actor receives its own 30D observation and, depending on
-the ablation, a compact partner message containing signed end-effector motion
-and task-agnostic motion context:
+## Clone and install
 
-```text
-z = [signed EE motion (3D), linear activity, angular activity, action smoothness]
-```
-
-The repository contains DirectMARL lift and fixed peg-in-hole tasks, MAPPO
-models and training code, communication ablations, AprilTag-based grasp target
-estimation, trace analysis, and ROS 2 deployment utilities.
-
-## Requirements
-
-- Isaac Lab checkout compatible with the local 2026 API
-- Isaac Sim and a CUDA-capable GPU for simulation
-- `skrl`, PyTorch, Gymnasium, NumPy, Matplotlib and PyYAML
-- ROS 2, `apriltag_msgs`, TF2 and OpenArm interfaces for real deployment
-
-## Clone and Install
-
-Clone this repository with every pinned dependency:
+Use **Ubuntu 22.04, ROS 2 Humble and system Python 3.10** for deployment.
+Isaac Lab and a GPU are not required on the robot computer. Install ROS Humble
+using the [official instructions](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)
+and install [uv](https://docs.astral.sh/uv/getting-started/installation/) plus
+Node.js 18+ with npm for the local browser dashboard.
+Then install the build tools:
 
 ```bash
-cd ~
-git clone --recurse-submodules https://github.com/pjs0209/openarm-motion-context.git
+sudo apt-get update
+sudo apt-get install -y git build-essential cmake python3-dev \
+  python3-colcon-common-extensions python3-rosdep
+# Run init once per computer; skip it if rosdep is already initialized.
+sudo rosdep init
+rosdep update --rosdistro humble
+
+git clone https://github.com/pjs0209/openarm-motion-context.git
 cd openarm-motion-context
-git submodule update --init --recursive
+bash scripts/deploy/setup.sh
+source scripts/deploy/env.sh
 ```
 
-Apply the project overlay and install Isaac Lab:
+Setup initializes the pinned deployment submodules automatically, installs ROS
+dependencies, builds `.openarm-ros`, and creates `.venv-openarm-deploy`. It includes
+OpenArm ROS2/CAN/description, RealSense ROS, AprilTag ROS/messages and image
+rectification. It leaves the historical Isaac Lab submodule uninitialized.
+Upstream optional MoveIt, GUI, Gazebo and ZED dependencies are excluded from
+this V1 deployment build. The RealSense SDK is installed through rosdep.
+
+For robot controllers without cameras, use `bash scripts/deploy/setup.sh --robot-only`.
+Use `--skip-rosdep` only when the required system dependencies are already installed.
+After pulling updates, rerun setup to update submodules and rebuild. Source
+`scripts/deploy/env.sh` in every new terminal from this repository's root.
+
+## Browser 3D dashboard
+
+The included [local dashboard](scripts/deploy/dashboard/README.md) displays
+measured and target robot meshes, box/ball/peg/hole poses, grasp targets,
+per-camera freshness and per-joint errors. After setup:
 
 ```bash
-cp -a source/. third_party/IsaacLab/source/
-cp -a scripts/. third_party/IsaacLab/scripts/
-cd third_party/IsaacLab
-./isaaclab.sh --install
-cd ../..
+source scripts/deploy/env.sh
+uv run --no-project --python .venv-openarm-deploy/bin/python python \
+  scripts/deploy/openarm_scene.py \
+  --config source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/configs/lift_real.yaml
 ```
 
-Run the two `cp` commands again after pulling new motion-context code. They
-refresh the local Isaac Lab working tree without changing pinned upstream
-history.
+Open **http://127.0.0.1:8765**. Add `--demo` for a clearly labelled synthetic
+preview without connecting to ROS or motors. For live policies, use the exported
+deployment YAML as `--config`. The monitor observes the existing ROS graph and
+provides no motor-control buttons or HTTP command endpoint. Box poses come from
+the Lift bridge; real ball/peg/hole poses need separate perception adapters.
 
-All implementation and configuration lives under
-`isaaclab_tasks.direct.openarm_motion_context`.
+## Check robot controllers
 
-## Assets
-
-OpenArm assets are grouped by responsibility in the Isaac Lab asset extension:
-
-```text
-source/isaaclab_assets/data/Robots/OpenArm
-source/isaaclab_assets/data/Sensors/OpenArm
-source/isaaclab_assets/data/Environments/OpenArm/{lift,peg_in_hole}
-source/isaaclab_assets/data/Objects/OpenArm/peg_in_hole
-```
-
-The OpenArm USD assets are workspace artifacts and are not duplicated inside
-the upstream dependency submodules. Copy the validated asset directories from
-the training workstation into `third_party/IsaacLab/source/isaaclab_assets/data`
-or use the following overrides when the assets live elsewhere:
+The included launch defaults to fake hardware and starts no cameras:
 
 ```bash
-export OPENARM_ROBOT_ASSET_DIR=/absolute/path/to/Robots/OpenArm
-export OPENARM_SENSOR_ASSET_DIR=/absolute/path/to/Sensors/OpenArm
-export OPENARM_ENVIRONMENT_ASSET_DIR=/absolute/path/to/Environments/OpenArm
-export OPENARM_OBJECT_ASSET_DIR=/absolute/path/to/Objects/OpenArm
+source scripts/deploy/env.sh
+ros2 launch ./scripts/deploy/bringup.launch.py
 ```
 
-The legacy `OPENARM_ASSET_DIR` variable is retained only for workspaces where
-all asset categories still share one directory.
-
-## Train
-
-Lift:
+In another terminal:
 
 ```bash
-cd ~/openarm-motion-context/third_party/IsaacLab
-./isaaclab.sh -p scripts/reinforcement_learning/skrl/train_openarm_bimanual_direct.py \
-  --task Isaac-OpenArm-Lift-v0 \
-  --experiment_tag motion_context \
-  --num_envs 128 \
-  --headless \
-  env.communication_mode=motion_context
-```
-
-Peg-in-hole:
-
-```bash
-cd ~/openarm-motion-context/third_party/IsaacLab
-./isaaclab.sh -p scripts/reinforcement_learning/skrl/train_openarm_bimanual_direct.py \
-  --task Isaac-OpenArm-PegInHole-v0 \
-  --experiment_tag motion_context \
-  --num_envs 128 \
-  --headless \
-  env.communication_mode=motion_context
-```
-
-Available communication ablations:
-
-```text
-none
-motion_only
-context_only
-motion_context
-previous_action
-full_partner_observation
-```
-
-## Evaluate and Save Traces
-
-```bash
-cd ~/openarm-motion-context/third_party/IsaacLab
-./isaaclab.sh -p scripts/reinforcement_learning/skrl/play_openarm_bimanual_direct.py \
-  --task Isaac-OpenArm-Lift-v0 \
-  --num_envs 1 \
-  --num_steps 9000 \
-  --num_eval_episodes 10 \
-  --deterministic_eval \
-  --save_motion_context_trace \
-  --motion_context_trace_dir logs/motion_context_traces/lift_motion_context \
-  --checkpoint ../../artifacts/checkpoints/lift_motion_context/best_agent.pt \
-  env.communication_mode=motion_context
-```
-
-Analyze traces without launching Isaac Sim:
-
-```bash
-cd ~/openarm-motion-context/third_party/IsaacLab
-./isaaclab.sh -p scripts/analyze_motion_context_trace.py \
-  --trace_dir logs/motion_context_traces/lift_motion_context \
-  --out_dir logs/motion_context_analysis
-```
-
-The analyzer writes episode, seed, method, failure, timing, payload-statistics,
-and schema-validation CSV files plus paper-ready overview and ablation figures.
-
-## Real-Robot Deployment
-
-Deployment configuration and calibration must be checked for the real robot.
-In particular, verify `T_box_tag`, grasp targets, camera optical frames, joint
-names, command topics, action limits, and checkpoint normalization statistics.
-
-### Build the ROS 2 workspace
-
-The commands below use ROS 2 Humble. Change the distro path if the robot uses a
-different ROS 2 release.
-
-```bash
-source /opt/ros/humble/setup.bash
-mkdir -p ~/openarm_robot_ws/src
-cd ~/openarm_robot_ws/src
-ln -sfn ~/openarm-motion-context/third_party/openarm_ros2 openarm_ros2
-ln -sfn ~/openarm-motion-context/third_party/openarm_can openarm_can
-ln -sfn ~/openarm-motion-context/third_party/realsense-ros realsense-ros
-ln -sfn ~/openarm-motion-context/third_party/apriltag_ros apriltag_ros
-cd ~/openarm_robot_ws
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install
-```
-
-Source ROS and this workspace in every real-robot terminal:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/openarm_robot_ws/install/setup.bash
-```
-
-Configure `can0` and `can1` according to the OpenArm v1.0 hardware guide before
-starting real hardware. Confirm which interface belongs to each arm; swapping
-them also swaps the commanded task pose.
-
-### Terminal 1: OpenArm bringup
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/openarm_robot_ws/install/setup.bash
-ros2 launch openarm_bringup openarm.bimanual.launch.py \
-  arm_type:=openarm_v1.0 \
-  use_fake_hardware:=false \
-  robot_controller:=joint_trajectory_controller \
-  right_can_interface:=can0 \
-  left_can_interface:=can1
-```
-
-Wait until the joint-state broadcaster, both arm controllers, and both gripper
-controllers are active. Check them in another sourced terminal:
-
-```bash
+source scripts/deploy/env.sh
 ros2 control list_controllers
 ros2 topic echo /joint_states --once
 ```
 
-### Move from bringup zero to the task start pose
+Expect the joint-state broadcaster, left/right forward position controllers
+and left/right gripper controllers to be active. The launch fixes the robot
+model to V1.0 and uses the upstream controller configuration, without RViz.
+To start the real robot after configuring SocketCAN and motor IDs for your
+hardware, set `use_fake_hardware:=false`. Right arm defaults to `can0`, left to
+`can1`, and CAN-FD is enabled; override `right_can_interface`,
+`left_can_interface` and `can_fd` to match the robot. Follow the
+[OpenArm hardware setup](https://docs.openarm.dev/) for bus and motor calibration.
 
-OpenArm v1.0's hardware plugin moves all arm joints to zero during activation.
-After bringup and controller activation, first validate that joint states and the
-configured task pose are available. This command does not move the robot:
+## Export a Lift checkpoint
 
-```bash
-cd ~/openarm-motion-context
-source /opt/ros/humble/setup.bash
-source ~/openarm_robot_ws/install/setup.bash
-python3 scripts/deploy/openarm_move_to_task_start.py \
-  --config scripts/deploy/openarm_lift_deploy.yaml
-```
-
-Clear the workspace, keep the emergency stop ready, and then explicitly execute
-the eight-second transition:
-
-```bash
-python3 scripts/deploy/openarm_move_to_task_start.py \
-  --config scripts/deploy/openarm_lift_deploy.yaml \
-  --duration 8.0 \
-  --execute
-```
-
-Only start policy deployment after the command reports that both arms reached
-the configured pose. The target joint values come from the same
-`default_joint_pos` used to center incremental actions during deployment.
-
-### Terminal 2: cameras and AprilTag detection
-
-Start all three D435i drivers using their fixed serial numbers and launch one
-AprilTag detector for each color stream. The resulting topics and optical
-frames must match `scripts/deploy/openarm_lift_deploy.yaml`:
+Supply a trained Newton **Lift Trend** checkpoint together with its run's
+`params/env.yaml` and `params/agent.yaml`:
 
 ```text
-/left_d435i/tag_detections   -> realsense_d435i_left_color_optical_frame
-/right_d435i/tag_detections  -> realsense_d435i_right_color_optical_frame
-/chest_d435i/tag_detections  -> realsense_d435i_color_optical_frame
+/path/to/run/
+  checkpoints/agent_60000.pt
+  params/env.yaml
+  params/agent.yaml
 ```
-
-Use the matching detector parameter file for each stream:
-
-```text
-scripts/deploy/config/left_wrist_apriltag.yaml
-scripts/deploy/config/right_wrist_apriltag.yaml
-scripts/deploy/config/chest_apriltag.yaml
-```
-
-These files deliberately publish camera-specific TF children such as
-`left_wrist_apriltag_00` and `chest_apriltag_00`. Do not reuse one tag-frame
-name across multiple detectors because TF permits only one parent per child.
-
-Check that detections and the chest camera transform are present:
 
 ```bash
-ros2 topic echo /left_d435i/tag_detections --once
-ros2 topic echo /right_d435i/tag_detections --once
-ros2 topic echo /chest_d435i/tag_detections --once
-ros2 run tf2_ros tf2_echo openarm_body_link0 realsense_d435i_color_optical_frame
-```
-
-Run the USD-to-real camera mount consistency check:
-
-```bash
-cd ~/openarm-motion-context
-source /opt/ros/humble/setup.bash
-source ~/openarm_robot_ws/install/setup.bash
-third_party/IsaacLab/isaaclab.sh -p \
-  source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/camera_tf_check.py \
-  --config scripts/deploy/openarm_lift_deploy.yaml
-```
-
-### Terminal 3: policy deployment
-
-Start with dry-run mode. It performs subscriptions and inference but does not
-publish robot commands:
-
-```bash
-cd ~/openarm-motion-context
-source /opt/ros/humble/setup.bash
-source ~/openarm_robot_ws/install/setup.bash
-python3 scripts/deploy/openarm_lift_ros2.py \
+uv run --no-project --python .venv-openarm-deploy/bin/python python \
+  scripts/deploy/openarm_lift_ros2.py \
   --config scripts/deploy/openarm_lift_deploy.yaml \
-  --checkpoint artifacts/checkpoints/lift_motion_context/best_agent.pt \
-  --dry-run
+  --checkpoint /path/to/run/checkpoints/agent_60000.pt \
+  --export-config deployment/lift.yaml
 ```
 
-Only after joint ordering, transforms, tag IDs, target positions, context scale,
-and action limits are verified should command publishing be enabled:
+The export loads both actors and normalizers, restores their saved settings,
+and writes `deployment/lift.yaml` plus three `lift_*_apriltag.yaml` files.
+Use `--validate-checkpoint` to validate without exporting. The older models
+in `artifacts/` are historical and are not validated for this adapter. This
+repository supplies deployment software; a compatible trained policy is a
+separate input. The historical simulation overlay is not a complete Isaac Lab
+3/Newton training distribution.
+
+## Start cameras and run the policy
+
+Measure camera mounting and tag/grasp transforms in `deployment/lift.yaml`.
+The included CAD transforms are initial estimates. Use the serial number of
+each physical camera to fix its role:
 
 ```bash
-cd ~/openarm-motion-context
-source /opt/ros/humble/setup.bash
-source ~/openarm_robot_ws/install/setup.bash
-python3 scripts/deploy/openarm_lift_ros2.py \
-  --config scripts/deploy/openarm_lift_deploy.yaml \
-  --checkpoint artifacts/checkpoints/lift_motion_context/best_agent.pt \
-  --publish
+source scripts/deploy/env.sh
+ros2 launch ./scripts/deploy/bringup.launch.py \
+  use_fake_hardware:=false start_cameras:=true \
+  deployment_config:=deployment/lift.yaml \
+  left_wrist_serial:=LEFT_SERIAL right_wrist_serial:=RIGHT_SERIAL chest_serial:=CHEST_SERIAL
 ```
 
-Do not run the task-start mover and policy publisher at the same time. Keep the
-physical emergency stop ready throughout initialization and deployment.
+This starts the robot, three color cameras, three rectifiers and three AprilTag
+detectors. Frame names and detection topics match the supplied deployment
+configuration; detector parameters come from the checkpoint export. The launch
+requires three distinct camera serials. Policy inference runs separately:
+
+```bash
+source scripts/deploy/env.sh
+# Check measured state; add --execute for the smooth move to the checkpoint start pose.
+uv run --no-project --python .venv-openarm-deploy/bin/python python \
+  scripts/deploy/openarm_move_to_task_start.py --config deployment/lift.yaml
+uv run --no-project --python .venv-openarm-deploy/bin/python python \
+  scripts/deploy/openarm_lift_ros2.py --config deployment/lift.yaml --dry-run
+# After calibration and start-pose checks, replace --dry-run with --publish.
+```
+
+Reported 36h11 print sizes include the white margin: 50 mm for tag 0, 20 mm
+for tags 1/2. Exported detector black-border edge sizes are 40/16/16 mm. Check
+these against the physical prints. The bridge holds commands when joint or
+camera measurements are stale, TF is missing, or tracking/target limits fail.
+
+See the [deployment guide](source/isaaclab_tasks/isaaclab_tasks/direct/openarm_motion_context/deploy/README.md)
+for policy conventions, calibration details and existing model-comparison evidence.
+Real camera streaming, motor tracking, gravity compensation and manipulation
+success require validation on the physical robot. WithBall and welded Peg
+checkpoints need separate perception/grasp adapters and are rejected here.
+
+## Portable checks
+
+Validated on 2026-10-28 with ROS Humble/Python 3.10:
+
+- All eight deployment source packages built, and a fresh CPU Python environment installed.
+- Five controllers activated on mock hardware; a position command returned through joint states.
+- Synthetic raw images passed through all three rectifiers and produced tag 0 detections on the configured topics.
+- A local Lift smoke checkpoint loaded both actors and exported the deployment/detector configurations.
+- Three portable deployment regressions and focused formatting/lint checks passed.
+
+These checks use mock hardware and synthetic images; they do not establish physical task success.
+
+```bash
+uv pip install --python .venv-openarm-deploy/bin/python pytest
+uv run --no-project --python .venv-openarm-deploy/bin/python python -m pytest \
+  source/isaaclab_tasks/test/test_openarm_deployment_runtime.py -q
+```
 
 ## License
 
-Code is provided under the BSD-3-Clause license inherited from Isaac Lab. USD,
-mesh, camera and robot assets are separate artifacts and may have different
-license requirements.
+See [LICENSE](LICENSE). Upstream submodules retain their original licenses.

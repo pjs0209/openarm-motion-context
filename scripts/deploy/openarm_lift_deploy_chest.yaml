@@ -1,16 +1,17 @@
 base_frame: openarm_body_link0
-control_rate_hz: 30.0
-checkpoint: artifacts/checkpoints/lift_motion_context/best_agent.pt
+control_rate_hz: 60.0
+checkpoint: ''
 dry_run: true
 safety:
-  max_joint_step: 0.01
+  max_joint_step: 0.04
   max_command_abs_from_default: 0.7
   max_target_delta_norm: 1.0
   max_joint_state_age: 0.25
+  max_tracking_error: 0.08
+  start_pose_tolerance_rad: 0.05
   max_detection_age: 0.35
   min_visible_tags: 1
   require_matching_detection_frame: true
-  max_tracking_error: 0.08
 policy:
   device: cpu
   hidden_sizes:
@@ -23,37 +24,42 @@ policy:
   partner_intent_embed_dim: 32
 communication:
   mode: motion_context
+  representation: trend
+  context_trend_horizon: 5
+  context_trend_beta: 0.8
+  context_trend_linear_epsilon: 0.01
+  context_trend_angular_epsilon: 0.05
+  context_trend_action_epsilon: 0.01
   motion_intent_horizon: 15
   interaction_motion_scale: 0.05
-  context_scale:
-  - 0.1
-  - 0.5
-  - 0.5
-  context_norm_max: 1.5
 action:
+  arm_command_type: forward_position
   action_scale: 0.7
-  action_step_scale: 0.005
+  action_step_scale: 0.04
   gripper_open_target: 0.04
   gripper_close_target: 0.0
   gripper_switch_epsilon: 0.02
-  command_time_from_start: 0.15
+  command_time_from_start: 0.016666666666666666
+  reset_grace_steps: 20
 topics:
   joint_states: /joint_states
   commands:
-    left_arm: /left_joint_trajectory_controller/joint_trajectory
-    right_arm: /right_joint_trajectory_controller/joint_trajectory
+    left_arm: /left_forward_position_controller/commands
+    right_arm: /right_forward_position_controller/commands
     left_gripper: /left_gripper_controller/joint_trajectory
     right_gripper: /right_gripper_controller/joint_trajectory
   apriltag:
+    left_wrist: /left_d435i/tag_detections
+    right_wrist: /right_d435i/tag_detections
     chest: /chest_d435i/tag_detections
 frames:
   left_ee: openarm_left_ee_tcp
   right_ee: openarm_right_ee_tcp
   cameras:
     chest: realsense_d435i_color_optical_frame
-  tag_frame_prefixes:
-    chest: chest_apriltag_
   camera_mounts:
+    left_wrist: openarm_left_link7
+    right_wrist: openarm_right_link7
     chest: openarm_body_link0
 static_policy_transforms:
 - parent: openarm_left_hand
@@ -187,47 +193,70 @@ default_joint_pos:
   - 0.05235988
   - -1.55334303
 apriltag:
+  family: 36h11
   ids:
   - 0
   - 1
   - 2
+  printed_outer_sizes_m:
+  - 0.05
+  - 0.02
+  - 0.02
+  size_basis: standard_36h11_one_cell_white_border
+  detector_edge_sizes_m:
+  - 0.04
+  - 0.016
+  - 0.016
+  frames_by_camera:
+    left_wrist:
+    - left_wrist_apriltag_00
+    - left_wrist_apriltag_01
+    - left_wrist_apriltag_02
+    right_wrist:
+    - right_wrist_apriltag_00
+    - right_wrist_apriltag_01
+    - right_wrist_apriltag_02
+    chest:
+    - chest_apriltag_00
+    - chest_apriltag_01
+    - chest_apriltag_02
   tag_pos_box:
   - - 0.0
     - 0.0
-    - -0.07095747
-  - - 0.0
-    - -0.143
-    - 0.0729
-  - - 0.0
-    - 0.143
-    - 0.0729
+    - 0.01382145
+  - - -0.206
+    - 0.0
+    - 0.15
+  - - 0.206
+    - 0.0
+    - 0.15
   tag_quat_box:
-  - - 1.0
+  - - -0.70710677
     - 0.0
     - 0.0
-    - 0.0
-  - - 1.0
-    - 0.0
-    - 0.0
-    - 0.0
-  - - 1.0
+    - 0.70710679
+  - - -0.70710677
     - 0.0
     - 0.0
+    - 0.70710679
+  - - -0.70710677
     - 0.0
+    - 0.0
+    - 0.70710679
 grip_targets:
   left_pos_box:
+  - 0.206
   - 0.0
-  - 0.14079
-  - 0.03060839
+  - 0.12
   left_quat_box:
   - 0.0
   - 1.0
   - 0.0
   - 0.0
   right_pos_box:
+  - -0.206
   - 0.0
-  - -0.14078731
-  - 0.03060839
+  - 0.12
   right_quat_box:
   - 0.0
   - 1.0
